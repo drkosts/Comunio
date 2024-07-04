@@ -66,7 +66,6 @@ response = AgGrid(
     gridOptions=grid_options,
     enable_enterprise_modules=True,
     update_mode="MODEL_CHANGED",
-    fit_columns_on_grid_load=True,
 )
 
 if response:
