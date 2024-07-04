@@ -58,6 +58,35 @@ else:
     transfers_to_display = grouped_transfers
 
 gb = GridOptionsBuilder.from_dataframe(transfers_to_display)
+gb.configure_column(
+    "Kaufpreis",
+    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    valueFormatter="data.Kaufpreis.toLocaleString('de-DE') + ' €';",
+)
+
+gb.configure_column(
+    "Verkaufspreis",
+    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    valueFormatter="data.Verkaufspreis.toLocaleString('de-DE') + ' €';",
+)
+
+gb.configure_column(
+    "Gewinn/Verlust",
+    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    valueFormatter="data['Gewinn/Verlust'].toLocaleString('de-DE') + ' €';",
+)
+
+gb.configure_column(
+    "Gewinn %",
+    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    valueFormatter="data['Gewinn %'].toLocaleString('de-DE') + ' %';",
+)
+
+gb.configure_column(
+    "Gewinn/Verlust pro Tag",
+    type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    valueFormatter="data['Gewinn/Verlust pro Tag'].toLocaleString('de-DE') + ' €';",
+)
 gb.configure_selection("single")
 grid_options = gb.build()
 
