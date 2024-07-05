@@ -1,9 +1,10 @@
 from pymongo.mongo_client import MongoClient
+import os
+
+mongo_uri = os.getevn("MONGO_URI")
 
 
 def get_db():
-    client = MongoClient(
-        "mongodb+srv://samuelkost:Jmspce52j12@comunio.hhihf3e.mongodb.net/?retryWrites=true&w=majority"
-    )
+    client = MongoClient(mongo_uri)
     db = client.test
     return db
