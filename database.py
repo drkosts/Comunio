@@ -1,7 +1,7 @@
 from pymongo.mongo_client import MongoClient
 import os
 
-mongo_uri = os.getevn("MONGO_URI")
+mongo_uri = os.getenv("MONGO_URI")
 
 
 def get_db():
