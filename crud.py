@@ -56,3 +56,22 @@ def get_player_market_value(db: MongoClient, player_id: str):
     df["Datum"] = pd.to_datetime(df["Datum"])
     df.sort_values(by="Datum", inplace=True)
     return df
+
+
+def get_player_points(db: MongoClient, player_id: str):
+    players = db.get_collection("Players")
+    player = players.find_one({"id": int(player_id)})
+    if not player:
+        return None
+    points_history = player["point_history"]
+    data = {
+        "Datum": [entry["matchday"]["timestamp"] for entry in points_history],
+        "Punkte": [
+            int(entry["points"]) if entry["points"] else 0 for entry in points_history
+        ],
+        "Spieltag": [entry["matchday"]["key"] for entry in points_history],
+    }
+    df = pd.DataFrame(data)
+    df["Datum"] = pd.to_datetime(df["Datum"])
+    df.sort_values(by="Datum", inplace=True)
+    return df

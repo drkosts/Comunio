@@ -103,8 +103,10 @@ if response:
         if not selected_row.empty:
             player_id = selected_row["ID"].values[0] if not selected_row.empty else None
             player_market_value = crud.get_player_market_value(db, player_id)
+            player_points = crud.get_player_points(db, player_id)
             utils.plot_player_market_value(
-                player_market_value,
+                player_market_value=player_market_value,
+                player_points=player_points,
                 player_name=selected_row["Spieler"].values[0],
                 buy_date=selected_row["Kaufdatum"].values[0],
                 sell_date=selected_row["Verkaufsdatum"].values[0],
