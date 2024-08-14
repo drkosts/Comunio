@@ -21,11 +21,12 @@ page = st.sidebar.radio(
 )
 
 st.title("Comunio App")
-transfers = crud.get_transfers(db)
+
 
 # configure the grid
 col1, col2, col3 = st.columns([2, 6, 2])
 with col1:
+    spielzeit = st.selectbox("Spielzeit", ["2024/2025", "2023/2024"], index=0)
     group_by_column = st.selectbox(
         "Gruppieren nach", ["Kein", "Mitspieler", "Von", "An"]
     )
@@ -39,6 +40,8 @@ aggregations = {
     "Gewinn %": "sum",
     "Gewinn/Verlust pro Tag": "sum",
 }
+
+transfers = crud.get_transfers(db, spielzeit)
 
 if group_by_column != "Kein":
     grouped_transfers = (

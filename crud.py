@@ -5,9 +5,19 @@ import pandas as pd
 from datetime import datetime
 
 
-def get_transfers(db: MongoClient) -> list:
+def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
+    if spielzeit == "2024/2025":
+        date_from = "2024-07-01"
+        date_to = "2025-06-31"
+    elif spielzeit == "2023/2024":
+        date_from = "2023-06-01"
+        date_to = "2024-06-31"
     transfers_collection: Collection = db.get_collection("Transfers")
-    transfers = list(transfers_collection.find({}, {"_id": 0}))
+    transfers = list(
+        transfers_collection.find(
+            {"buy.date": {"$gt": date_from, "$lt": date_to}}, {"_id": 0}
+        )
+    )
     transfer_array = []
     for transfer in transfers:
         buy_price = transfer["buy"]["price"]
