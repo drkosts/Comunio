@@ -10,17 +10,32 @@ def plot_player_market_value(
     buy_date: str,
     sell_date: str = None,
     sell_price: str = None,
+    spielzeit: str = "2024/2025",
 ) -> None:
+    if spielzeit == "2024/2025":
+        date_from = "2024-07-01"
+        date_to = "2025-06-30"
+    elif spielzeit == "2023/2024":
+        date_from = "2023-06-01"
+        date_to = "2024-06-30"
+    print(spielzeit)
+    print(date_from, date_to)
     buy_date = pd.to_datetime(buy_date).date()
     sell_date = pd.to_datetime(sell_date).date() if sell_date else None
-    # take only values from player_market_value where Datum is > 2024-15-07
+    # take only values from player_market_value for spielzeit
+    player_market_value["Datum"] = pd.to_datetime(
+        player_market_value["Datum"], utc=True
+    ).dt.tz_convert(None)
     player_market_value = player_market_value[
-        pd.to_datetime(player_market_value["Datum"], utc=True).dt.tz_convert(None)
-        >= pd.to_datetime("2024-07-15")
+        (player_market_value["Datum"] >= pd.to_datetime(date_from))
+        & (player_market_value["Datum"] <= pd.to_datetime(date_to))
     ]
+    converted_date = pd.to_datetime(player_points["Datum"], utc=True).dt.tz_convert(
+        None
+    )
     player_points = player_points[
-        pd.to_datetime(player_points["Datum"], utc=True).dt.tz_convert(None)
-        >= pd.to_datetime("2024-07-15")
+        (converted_date >= pd.to_datetime(date_from))
+        & (converted_date <= pd.to_datetime(date_to))
     ]
 
     if player_market_value is not None:

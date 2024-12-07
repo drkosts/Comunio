@@ -47,7 +47,7 @@ elif page == "Home":
         "Gewinn/Verlust pro Tag": "sum",
     }
 
-    transfers = crud.get_transfers(db, spielzeit)
+    # transfers = crud.get_transfers(db, spielzeit)
 
     if group_by_column != "Kein":
         grouped_transfers = (
@@ -129,6 +129,7 @@ elif page == "Home":
     )
 
     if response:
+        print(f"spielzeit: {spielzeit}")
         selected_row = response["selected_rows"]
         if selected_row is not None:
             if not selected_row.empty:
@@ -144,4 +145,5 @@ elif page == "Home":
                     buy_date=selected_row["Kaufdatum"].values[0],
                     sell_date=selected_row["Verkaufsdatum"].values[0],
                     sell_price=selected_row["Verkaufspreis"].values[0],
+                    spielzeit=spielzeit,
                 )
