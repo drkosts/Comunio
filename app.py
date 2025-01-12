@@ -36,6 +36,17 @@ elif page == "Home":
         group_by_column = st.selectbox(
             "Gruppieren nach", ["Kein", "Mitspieler", "Von", "An"]
         )
+    with col2:
+        # add a date filter inpupt
+        date_range_standard = [
+            transfers["Kaufdatum"].min(),
+            transfers["Kaufdatum"].max(),
+        ]
+        date_range = st.date_input("Von - Bis", date_range_standard)
+        if len(date_range) < 2:
+            date_range = date_range_standard
+        date_range = [pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])]
+
     with col3:
         search_value = st.text_input("Suche")
 
@@ -43,29 +54,39 @@ elif page == "Home":
         "Kaufpreis": "sum",
         "Verkaufspreis": "sum",
         "Gewinn/Verlust": "sum",
-        "Gewinn %": "sum",
         "Gewinn/Verlust pro Tag": "sum",
     }
 
     # transfers = crud.get_transfers(db, spielzeit)
 
-    if group_by_column != "Kein":
-        grouped_transfers = (
-            transfers.groupby(group_by_column).agg(aggregations).reset_index()
-        )
+    if date_range:
+        transfers_to_display = transfers[
+            (transfers["Kaufdatum"] >= date_range[0])
+            & (transfers["Kaufdatum"] <= date_range[1])
+        ]
+
     else:
-        grouped_transfers = transfers
+        transfers_to_display = transfers
 
     if search_value:
-        filtered_grouped_transfers = grouped_transfers.apply(
+        filtered_grouped_transfers = transfers_to_display.apply(
             lambda x: search_value.lower()
             in x.astype(str).str.lower().str.cat(sep=" "),
             axis=1,
         )
         print(filtered_grouped_transfers)
-        transfers_to_display = grouped_transfers[filtered_grouped_transfers]
+        transfers_to_display = transfers_to_display[filtered_grouped_transfers]
     else:
-        transfers_to_display = grouped_transfers
+        transfers_to_display = transfers_to_display
+
+    if group_by_column != "Kein":
+        transfers_to_display = (
+            transfers_to_display.groupby(group_by_column)
+            .agg(aggregations)
+            .reset_index()
+        )
+    else:
+        transfers_to_display = transfers_to_display
 
     # Fetch points and matchdays for each transfer in one function call
     # transfers_to_display[["Total Points", "Matchdays"]] = transfers_to_display.apply(
@@ -96,11 +117,11 @@ elif page == "Home":
         valueFormatter="data['Gewinn/Verlust'].toLocaleString('de-DE') + ' €';",
     )
 
-    gb.configure_column(
-        "Gewinn %",
-        type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
-        valueFormatter="data['Gewinn %'].toLocaleString('de-DE') + ' %';",
-    )
+    # gb.configure_column(
+    #     "Gewinn %",
+    #     type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
+    #     valueFormatter="data['Gewinn %'].toLocaleString('de-DE') + ' %';",
+    # )
 
     gb.configure_column(
         "Gewinn/Verlust pro Tag",
