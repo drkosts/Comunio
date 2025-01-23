@@ -1,6 +1,11 @@
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from unidecode import unidecode
+
+
+def normalize_string(s: str) -> str:
+    return unidecode(s).lower()
 
 
 def plot_player_market_value(
@@ -135,3 +140,116 @@ def plot_player_market_value(
         st.plotly_chart(fig)
     else:
         st.text("Für diesen Spieler sind keine Daten vorhanden.")
+
+
+def plot_total_points_vs_price(
+    player_points: pd.DataFrame, search_value: str = None
+) -> None:
+
+    # Create the scatter plot
+    fig = go.Figure()
+
+    # Add the main scatter plot trace
+    fig.add_trace(
+        go.Scatter(
+            x=player_points["Preis"],
+            y=player_points["Punkte"],
+            mode="markers",
+            text=player_points["Spieler"],
+            marker=dict(
+                size=12,
+                color=player_points["Preis"],
+                colorscale="Viridis",
+                showscale=True,
+            ),
+            name="Players",
+            showlegend=False,
+        )
+    )
+
+    # Highlight the searched player
+    if search_value:
+        normalized_search_value = normalize_string(search_value)
+        highlighted_points = player_points[
+            player_points["Spieler"]
+            .apply(normalize_string)
+            .str.contains(normalized_search_value, case=False, na=False)
+        ]
+        fig.add_trace(
+            go.Scatter(
+                x=highlighted_points["Preis"],
+                y=highlighted_points["Punkte"],
+                mode="markers",
+                text=highlighted_points["Spieler"],
+                marker=dict(
+                    size=12,
+                    color="red",
+                    symbol="circle",
+                ),
+                name="Highlighted Player",
+                showlegend=False,
+            )
+        )
+
+    fig.update_layout(
+        title="Punkte vs Preis",
+        xaxis_title="Preis",
+        yaxis_title="Punkte",
+        template="plotly_white",
+        legend=None,
+    )
+    st.plotly_chart(fig)
+
+
+def plot_average_points_vs_price(
+    player_points: pd.DataFrame, search_value: str = None
+) -> None:
+    # make scatter plot of Punkte vs Preis
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=player_points["Preis"],
+            y=player_points["PpS"],
+            mode="markers",
+            text=player_points["Spieler"],
+            marker=dict(
+                size=12,
+                color=player_points["Preis"],
+                colorscale="Viridis",
+                showscale=True,
+            ),
+            showlegend=False,
+        )
+    )
+
+    # Highlight the searched player
+    if search_value:
+        normalized_search_value = normalize_string(search_value)
+        highlighted_points = player_points[
+            player_points["Spieler"]
+            .apply(normalize_string)
+            .str.contains(normalized_search_value, case=False, na=False)
+        ]
+        fig.add_trace(
+            go.Scatter(
+                x=highlighted_points["Preis"],
+                y=highlighted_points["PpS"],
+                mode="markers",
+                text=highlighted_points["Spieler"],
+                marker=dict(
+                    size=12,
+                    color="red",
+                    symbol="circle",
+                ),
+                name="Highlighted Player",
+                showlegend=False,
+            )
+        )
+
+    fig.update_layout(
+        title="Avg Punkte vs Preis",
+        xaxis_title="Preis",
+        yaxis_title="PpS",
+        template="plotly_white",
+    )
+    st.plotly_chart(fig)

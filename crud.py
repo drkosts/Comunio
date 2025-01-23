@@ -118,6 +118,72 @@ def get_player_market_value(db: MongoClient, player_id: str):
     return df
 
 
+def get_player_market_values_df(db: MongoClient):
+    players = db.get_collection("Players")
+
+    # Define the aggregation pipeline
+    pipeline = [
+        {"$unwind": "$price_history"},
+        {
+            "$project": {
+                "Datum": "$price_history.timestamp",
+                "Marktwert": "$price_history.quotedPrice",
+                "Spieler": "$name",
+                "ID": "$id",
+            }
+        },
+    ]
+
+    # Execute the aggregation pipeline
+    result = list(players.aggregate(pipeline))
+
+    # Convert the result to a DataFrame
+    df = pd.DataFrame(result)
+
+    return df
+
+
+def get_player_points_df(db: MongoClient):
+    players = db.get_collection("Players")
+
+    # Define the aggregation pipeline
+    pipeline = [
+        {"$unwind": "$point_history"},
+        {
+            "$project": {
+                "Datum": "$point_history.matchday.timestamp",
+                "Punkte": "$point_history.points",
+                "Spieler": "$name",
+                "ID": "$id",
+                "Preis": "$price",
+            }
+        },
+    ]
+
+    # Execute the aggregation pipeline
+    points = players.aggregate(pipeline)
+
+    # Convert the result to a DataFrame
+    df = pd.DataFrame(list(points))
+    # filter only entries with Datum greater than 2024-07-01
+    df = df[df["Datum"] > "2024-07-01"]
+    # make Punkte numeric
+    df["Punkte"] = pd.to_numeric(df["Punkte"], downcast="integer")
+    # group by ID and sum up the points and count the none null entries and show name and points
+    df = (
+        df.groupby(["ID", "Spieler", "Preis"])["Punkte"]
+        .agg(["sum", "count"])
+        .rename(columns={"sum": "Punkte", "count": "Spiele"})
+        .reset_index()
+    )
+    df["PpS"] = round(df["Punkte"] / df["Spiele"], 2)
+
+    # df = df.groupby(["ID", "Spieler"])["Punkte"].sum().reset_index()
+    # print(df.sort_values(by="Punkte", ascending=False))
+    print(df.sort_values(by="Punkte", ascending=False))
+    return df
+
+
 def get_player_points(db: MongoClient, player_id: str):
     players = db.get_collection("Players")
     player = players.find_one({"id": int(player_id)})

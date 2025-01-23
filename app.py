@@ -24,6 +24,8 @@ page = st.sidebar.radio(
 st.title("Comunio App")
 spielzeit = st.selectbox("Spielzeit", ["2024/2025", "2023/2024"], index=0)
 transfers = crud.get_transfers(db, spielzeit)
+# player_mws = crud.get_player_market_values_df(db)
+# print(player_mws)
 
 if page == "Statistics":
     statistics.show(db, spielzeit)
@@ -168,3 +170,15 @@ elif page == "Home":
                     sell_price=selected_row["Verkaufspreis"].values[0],
                     spielzeit=spielzeit,
                 )
+
+elif page == "Players":
+    player_points = crud.get_player_points_df(db)
+    search_value = st.text_input("Suche Spieler", key="search_player")
+    (
+        col1,
+        col2,
+    ) = st.columns([5, 5])
+    with col1:
+        utils.plot_total_points_vs_price(player_points, search_value)
+    with col2:
+        utils.plot_average_points_vs_price(player_points, search_value)
