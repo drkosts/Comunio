@@ -1,5 +1,5 @@
 from pymongo.mongo_client import MongoClient
-
+import time
 from pymongo.collection import Collection
 import pandas as pd
 from datetime import datetime
@@ -146,9 +146,11 @@ def get_player_market_values_df(db: MongoClient):
 def get_player_points_df(db: MongoClient):
     players = db.get_collection("Players")
 
-    # Define the aggregation pipeline
+    # Measure time to define the aggregation pipeline
+    start_time = time.time()
     pipeline = [
         {"$unwind": "$point_history"},
+        {"$match": {"point_history.matchday.timestamp": {"$gt": "2024-07-12"}}},
         {
             "$project": {
                 "Datum": "$point_history.matchday.timestamp",
@@ -159,28 +161,61 @@ def get_player_points_df(db: MongoClient):
             }
         },
     ]
+    end_time = time.time()
+    print(f"Time to define aggregation pipeline: {end_time - start_time:.2f} seconds")
 
-    # Execute the aggregation pipeline
+    # Measure time to execute the aggregation pipeline
+    start_time = time.time()
     points = players.aggregate(pipeline)
+    end_time = time.time()
+    print(f"Time to execute aggregation pipeline: {end_time - start_time:.2f} seconds")
 
-    # Convert the result to a DataFrame
+    # Measure time to execute the aggregation pipeline
+    start_time = time.time()
+    points = list(points)
+    end_time = time.time()
+    print(len(points))
+    print(
+        f"Time to make aggregation result a list: {end_time - start_time:.2f} seconds"
+    )
+
+    # Measure time to convert the result to a DataFrame
+    start_time = time.time()
     df = pd.DataFrame(list(points))
-    # filter only entries with Datum greater than 2024-07-01
+    end_time = time.time()
+    print(f"Time to convert result to DataFrame: {end_time - start_time:.2f} seconds")
+
+    # Measure time to filter entries
+    start_time = time.time()
     df = df[df["Datum"] > "2024-07-01"]
-    # make Punkte numeric
+    end_time = time.time()
+    print(f"Time to filter entries: {end_time - start_time:.2f} seconds")
+
+    # Measure time to make Punkte numeric
+    start_time = time.time()
     df["Punkte"] = pd.to_numeric(df["Punkte"], downcast="integer")
-    # group by ID and sum up the points and count the none null entries and show name and points
+    end_time = time.time()
+    print(f"Time to make Punkte numeric: {end_time - start_time:.2f} seconds")
+
+    # Measure time to group by ID and aggregate points
+    start_time = time.time()
     df = (
         df.groupby(["ID", "Spieler", "Preis"])["Punkte"]
         .agg(["sum", "count"])
         .rename(columns={"sum": "Punkte", "count": "Spiele"})
         .reset_index()
     )
-    df["PpS"] = round(df["Punkte"] / df["Spiele"], 2)
+    end_time = time.time()
+    print(
+        f"Time to group by ID and aggregate points: {end_time - start_time:.2f} seconds"
+    )
 
-    # df = df.groupby(["ID", "Spieler"])["Punkte"].sum().reset_index()
-    # print(df.sort_values(by="Punkte", ascending=False))
-    print(df.sort_values(by="Punkte", ascending=False))
+    # Measure time to calculate points per game
+    start_time = time.time()
+    df["PpS"] = round(df["Punkte"] / df["Spiele"], 2)
+    end_time = time.time()
+    print(f"Time to calculate points per game: {end_time - start_time:.2f} seconds")
+
     return df
 
 

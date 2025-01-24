@@ -253,3 +253,38 @@ def plot_average_points_vs_price(
         template="plotly_white",
     )
     st.plotly_chart(fig)
+
+
+def plot_profit_by_price_buckets(member_transfers):
+    # Define custom bin edges
+    bin_edges = [0, 1000000, 2000000, 5000000, 10000000, 15000000, 20000000, 30000000]
+    bin_labels = ["0M-1M", "1M-2M", "2M-5M", "5M-10M", "10M-15M", "15M-20M", "20M-30M"]
+
+    # Create a new column for the custom bins
+    member_transfers["Kaufpreis_bins"] = pd.cut(
+        member_transfers["Kaufpreis"], bins=bin_edges, labels=bin_labels
+    )
+
+    # Aggregate Gewinn/Verlust by the custom bins
+    bin_data = (
+        member_transfers.groupby("Kaufpreis_bins")["Gewinn/Verlust"].sum().reset_index()
+    )
+
+    # Create the histogram
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=bin_data["Kaufpreis_bins"],
+            y=bin_data["Gewinn/Verlust"],
+        )
+    )
+    fig.update_layout(
+        xaxis_title="Kaufpreis",
+        yaxis_title="Gewinn/Verlust",
+        template="plotly_white",
+        width=800,  # Adjust the width to match the table size
+        height=300,  # Adjust the height to match the table size
+        margin=dict(l=0, r=0, t=0, b=0),  # Remove the space around the plot
+        xaxis=dict(tickvals=bin_data["Kaufpreis_bins"], ticktext=bin_labels),
+    )
+    st.plotly_chart(fig)

@@ -5,12 +5,13 @@ import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder
 import utils
 import summary_stats as statistics
+import time
 
 db = get_db()
 
 st.set_page_config(
     page_title="Comunio App",
-    page_icon=":money_wiht_wings:",
+    page_icon=":money_with_wings:",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -23,10 +24,34 @@ page = st.sidebar.radio(
 
 st.title("Comunio App")
 spielzeit = st.selectbox("Spielzeit", ["2024/2025", "2023/2024"], index=0)
-transfers = crud.get_transfers(db, spielzeit)
-player_points = crud.get_player_points_df(db)
-# player_mws = crud.get_player_market_values_df(db)
-# print(player_mws)
+
+
+@st.cache_data
+def load_transfers(_db, spielzeit):
+    start_time = time.time()
+    transfers = crud.get_transfers(db, spielzeit)
+    end_time = time.time()
+    st.write(f"Time to load transfers: {end_time - start_time:.2f} seconds")
+    return transfers
+
+
+@st.cache_resource
+def load_player_points(_db, date):
+    start_time = time.time()
+    player_points = crud.get_player_points_df(db)
+    end_time = time.time()
+    st.write(f"Time to load player points: {end_time - start_time:.2f} seconds")
+    return player_points
+
+
+# Load transfers immediately
+transfers = load_transfers(db, spielzeit)
+
+# get current date
+date = pd.to_datetime("today").date()
+# Load player points in the background
+if "players_points" not in st.session_state:
+    st.session_state.players_points = load_player_points(db, date)
 
 if page == "Statistics":
     statistics.show(db, spielzeit)
@@ -35,12 +60,11 @@ elif page == "Home":
     # configure the grid
     col1, col2, col3 = st.columns([2, 6, 2])
     with col1:
-
         group_by_column = st.selectbox(
             "Gruppieren nach", ["Kein", "Mitspieler", "Von", "An"]
         )
     with col2:
-        # add a date filter inpupt
+        # add a date filter input
         date_range_standard = [
             transfers["Kaufdatum"].min(),
             transfers["Kaufdatum"].max(),
@@ -60,14 +84,11 @@ elif page == "Home":
         "Gewinn/Verlust pro Tag": "sum",
     }
 
-    # transfers = crud.get_transfers(db, spielzeit)
-
     if date_range:
         transfers_to_display = transfers[
             (transfers["Kaufdatum"] >= date_range[0])
             & (transfers["Kaufdatum"] <= date_range[1])
         ]
-
     else:
         transfers_to_display = transfers
 
@@ -77,7 +98,6 @@ elif page == "Home":
             in x.astype(str).str.lower().str.cat(sep=" "),
             axis=1,
         )
-        print(filtered_grouped_transfers)
         transfers_to_display = transfers_to_display[filtered_grouped_transfers]
     else:
         transfers_to_display = transfers_to_display
@@ -90,16 +110,6 @@ elif page == "Home":
         )
     else:
         transfers_to_display = transfers_to_display
-
-    # Fetch points and matchdays for each transfer in one function call
-    # transfers_to_display[["Total Points", "Matchdays"]] = transfers_to_display.apply(
-    #     lambda row: pd.Series(
-    #         crud.get_player_points_between_dates(
-    #             db, row["ID"], row["Kaufdatum"], row["Verkaufsdatum"]
-    #         )
-    #     ),
-    #     axis=1,
-    # )
 
     gb = GridOptionsBuilder.from_dataframe(transfers_to_display)
     gb.configure_column(
@@ -120,28 +130,11 @@ elif page == "Home":
         valueFormatter="data['Gewinn/Verlust'].toLocaleString('de-DE') + ' €';",
     )
 
-    # gb.configure_column(
-    #     "Gewinn %",
-    #     type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
-    #     valueFormatter="data['Gewinn %'].toLocaleString('de-DE') + ' %';",
-    # )
-
     gb.configure_column(
         "Gewinn/Verlust pro Tag",
         type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
         valueFormatter="data['Gewinn/Verlust pro Tag'].toLocaleString('de-DE') + ' €';",
     )
-    # gb.configure_column(
-    #     "Gesammelte Punkte",
-    #     type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
-    #     valueFormatter="data['Total Points'].toLocaleString('de-DE');",
-    # )
-
-    # gb.configure_column(
-    #     "Spieltage",
-    #     type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
-    #     valueFormatter="data['Matchdays'].toLocaleString('de-DE');",
-    # )
     gb.configure_selection("single")
     grid_options = gb.build()
 
@@ -173,13 +166,54 @@ elif page == "Home":
                 )
 
 elif page == "Players":
+    if st.session_state.players_points is not None:
+        search_value = st.text_input("Suche Spieler", key="search_player")
+        col1, col2 = st.columns([5, 5])
+        with col1:
+            utils.plot_total_points_vs_price(
+                st.session_state.players_points, search_value
+            )
+        with col2:
+            utils.plot_average_points_vs_price(
+                st.session_state.players_points, search_value
+            )
+    else:
+        st.write("Loading player points...")
 
-    search_value = st.text_input("Suche Spieler", key="search_player")
-    (
-        col1,
-        col2,
-    ) = st.columns([5, 5])
-    with col1:
-        utils.plot_total_points_vs_price(player_points, search_value)
-    with col2:
-        utils.plot_average_points_vs_price(player_points, search_value)
+elif page == "Members":
+    members = transfers["Mitspieler"].unique()
+    # Sort members by Gewinn/Verlust
+    sorted_members = (
+        transfers.groupby("Mitspieler")["Gewinn/Verlust"]
+        .sum()
+        .sort_values(ascending=False)
+        .index
+    )
+
+    for member in sorted_members:
+        st.write(f"### {member}")
+        member_transfers = transfers[transfers["Mitspieler"] == member]
+        member_transfers = member_transfers.sort_values(
+            by="Gewinn/Verlust", ascending=False
+        )
+
+        # Select specific columns to display
+        member_transfers = member_transfers[
+            [
+                "Spieler",
+                "Kaufpreis",
+                "Verkaufspreis",
+                "Gewinn/Verlust",
+            ]
+        ]
+
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            # Display the 5 best Gewinn/Verlust pro Tag for each member
+            st.write(
+                f"Gesamt: {transfers[transfers['Mitspieler'] == member]['Gewinn/Verlust'].sum():,.0f} €"
+            )
+            st.write(member_transfers.head(5))
+        with col2:
+            # Plot histogram of Gewinn/Verlust by Kaufpreis buckets
+            utils.plot_profit_by_price_buckets(member_transfers)
