@@ -27,7 +27,7 @@ spielzeit = st.selectbox("Spielzeit", ["2024/2025", "2023/2024"], index=0)
 
 
 @st.cache_data
-def load_transfers(_db, spielzeit):
+def load_transfers(_db, spielzeit, date):
     start_time = time.time()
     transfers = crud.get_transfers(db, spielzeit)
     end_time = time.time()
@@ -44,11 +44,12 @@ def load_player_points(_db, date):
     return player_points
 
 
-# Load transfers immediately
-transfers = load_transfers(db, spielzeit)
-
 # get current date
 date = pd.to_datetime("today").date()
+
+# Load transfers immediately
+transfers = load_transfers(db, spielzeit, date)
+
 # Load player points in the background
 if "players_points" not in st.session_state:
     st.session_state.players_points = load_player_points(db, date)
