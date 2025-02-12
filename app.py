@@ -187,7 +187,7 @@ elif page == "Members":
     sorted_members = (
         transfers.groupby("Mitspieler")["Gewinn/Verlust"]
         .sum()
-        .sort_values(ascending=False)
+        .sort_values(ascending=False, na_position="last")
         .index
     )
 
@@ -195,7 +195,7 @@ elif page == "Members":
         st.write(f"### {member}")
         member_transfers = transfers[transfers["Mitspieler"] == member]
         member_transfers = member_transfers.sort_values(
-            by="Gewinn/Verlust", ascending=False
+            by="Gewinn/Verlust", ascending=False, na_position="last"
         )
 
         # Select specific columns to display
@@ -212,7 +212,7 @@ elif page == "Members":
         with col1:
             # Display the 5 best Gewinn/Verlust pro Tag for each member
             st.write(
-                f"Gesamt: {transfers[transfers['Mitspieler'] == member]['Gewinn/Verlust'].sum():,.0f} €"
+                f"Gesamt: {transfers[transfers['Mitspieler'] == member]['Gewinn/Verlust'].sum():,.0f} € ({transfers[transfers['Mitspieler']==member]['Gewinn/Verlust'].count():,.0f} Trades)"
             )
             st.write(member_transfers.head(5))
         with col2:
