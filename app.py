@@ -45,7 +45,7 @@ def load_player_points(_db, date):
 
 
 # get current date
-date = pd.to_datetime("today").date()
+date = pd.to_datetime("today").hour
 
 # Load transfers immediately
 transfers = load_transfers(db, spielzeit, date)
