@@ -115,7 +115,8 @@ def get_player_market_value(db: MongoClient, player_id: str):
         "Marktwert": [entry["quotedPrice"] for entry in price_history],
     }
     df = pd.DataFrame(data)
-    df["Datum"] = pd.to_datetime(df["Datum"])
+    # Fix: Add utc=True to handle mixed timezones properly
+    df["Datum"] = pd.to_datetime(df["Datum"], utc=True)
     df.sort_values(by="Datum", inplace=True)
     return df
 

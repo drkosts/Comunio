@@ -21,7 +21,7 @@ st.set_page_config(
 # Sidebar navigation
 st.sidebar.title("Comunio App")
 page = st.sidebar.radio(
-    "",
+    "Navigation",
     ["Home", "Transfers", "Players", "Members", "Teams", "Statistics"],
 )
 
@@ -52,6 +52,6 @@ elif page == "Players":
 elif page == "Members":
     members.show(transfers_data)
 elif page == "Transfers":
-    transfers_page.show()
+    transfers_page.show(db, transfers_data, spielzeit)
 elif page == "Teams":
     teams_page.show()
