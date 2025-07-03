@@ -4,18 +4,26 @@ from pymongo.collection import Collection
 import pandas as pd
 from datetime import datetime
 import logging
+from typing import Dict, Tuple
 
-def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
-    if spielzeit == "2024/2025":
-        date_from = "2024-07-01"
-        date_to = "2025-06-31"
-    elif spielzeit == "2023/2024":
-        date_from = "2023-06-01"
-        date_to = "2024-06-31"
-    elif spielzeit == "2025/2026":
-        date_from = "2025-06-30"
-        date_to = "2026-06-31"
-    transfers_collection: Collection = db.get_collection("Transfers")
+# Season date ranges configuration
+SEASON_DATE_RANGES: Dict[str, Tuple[str, str]] = {
+    "2024/2025": ("2024-07-01", "2025-06-30"),
+    "2023/2024": ("2023-06-01", "2024-06-30"),
+    "2025/2026": ("2025-06-30", "2026-06-30"),
+}
+
+DEFAULT_DATE_RANGE = ("2000-01-01", "2030-01-01")
+
+def get_date_range(spielzeit: str) -> Tuple[str, str]:
+    """Get date range for a given spielzeit (season)"""
+    return SEASON_DATE_RANGES.get(spielzeit, DEFAULT_DATE_RANGE)
+
+
+def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    date_from, date_to = get_date_range(spielzeit)
+    transfers_collection = db["Transfers"]
+    
     transfers = list(
         transfers_collection.find(
             {"buy.date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
@@ -56,16 +64,9 @@ def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
 
 
 def count_second_bids(db: MongoClient, spielzeit: str = "2024/2025"):
-    if spielzeit == "2024/2025":
-        date_from = "2024-07-01"
-        date_to = "2025-06-31"
-    elif spielzeit == "2023/2024":
-        date_from = "2023-06-01"
-        date_to = "2024-06-31"
-    elif spielzeit == "2025/2026":
-        date_from = "2025-06-30"
-        date_to = "2026-06-31"
-    transfers_collection: Collection = db.get_collection("Transfers")
+    date_from, date_to = get_date_range(spielzeit)
+
+    transfers_collection = db["Transfers"]
     pipeline = [
         {"$match": {"buy.date": {"$gt": date_from, "$lt": date_to}}},
         {"$group": {"_id": "$buy.second_highest_bidder", "count": {"$sum": 1}}},
@@ -84,16 +85,8 @@ def count_second_bids(db: MongoClient, spielzeit: str = "2024/2025"):
 
 
 def count_transfers_buys(db: MongoClient, spielzeit: str = "2024/2025"):
-    if spielzeit == "2024/2025":
-        date_from = "2024-07-01"
-        date_to = "2025-06-31"
-    elif spielzeit == "2023/2024":
-        date_from = "2023-06-01"
-        date_to = "2024-06-31"
-    elif spielzeit == "2025/2026":
-        date_from = "2025-06-30"
-        date_to = "2026-06-31"
-    transfers_collection: Collection = db.get_collection("Transfers")
+    date_from, date_to = get_date_range(spielzeit)
+    transfers_collection = db["Transfers"]
     pipeline = [
         {"$match": {"buy.date": {"$gt": date_from, "$lt": date_to}}},
         {"$group": {"_id": "$member_name", "count": {"$sum": 1}}},
@@ -112,7 +105,7 @@ def count_transfers_buys(db: MongoClient, spielzeit: str = "2024/2025"):
 
 
 def get_player_market_value(db: MongoClient, player_id: str):
-    players = db.get_collection("Players")
+    players = db["Players"]
     player = players.find_one({"id": int(player_id)})
     if not player:
         return None
@@ -128,7 +121,7 @@ def get_player_market_value(db: MongoClient, player_id: str):
 
 
 def get_player_market_values_df(db: MongoClient):
-    players = db.get_collection("Players")
+    players = db["Players"]
 
     # Define the aggregation pipeline
     pipeline = [
@@ -153,7 +146,7 @@ def get_player_market_values_df(db: MongoClient):
 
 
 def get_player_points_df(db: MongoClient):
-    players = db.get_collection("Players")
+    players = db["Players"]
 
     # Measure time to define the aggregation pipeline
     start_time = time.time()
@@ -229,7 +222,7 @@ def get_player_points_df(db: MongoClient):
 
 
 def get_player_points(db: MongoClient, player_id: str):
-    players = db.get_collection("Players")
+    players = db["Players"]
     player = players.find_one({"id": int(player_id)})
     if not player:
         return None
@@ -251,7 +244,7 @@ def get_player_points_between_dates(
     db: MongoClient,
     player_id: str,
     start_date: str,
-    end_date: str = pd.to_datetime("2030-01-01"),
+    end_date: str = pd.to_datetime("2030-01-01").date().strftime("%Y-%m-%d"),
 ):
     start_date = pd.to_datetime(start_date).strftime("%Y-%m-%d")
     end_date = (
@@ -260,7 +253,7 @@ def get_player_points_between_dates(
         else "2030-01-01"
     )
     # Get the PlayerPoints collection
-    player_points_collection: Collection = db.get_collection("PlayerPoints")
+    player_points_collection = db["PlayerPoints"]
 
     # Define the query to fetch points between the dates
     pipeline = [
@@ -295,3 +288,95 @@ def get_player_points_between_dates(
     matchdays_count = results[0]["matchdays_count"]
 
     return total_points, matchdays_count
+
+
+def get_player_current_market_values_df(db: MongoClient):
+    """Get the current (most recent) market value for each player"""
+    players = db["Players"]
+
+    pipeline = [
+        {
+            "$project": {
+                "id": 1,
+                "name": 1,
+                # Get the last element of price_history array (most recent market value)
+                "latest_price": {"$last": "$price_history.quotedPrice"},
+                "latest_timestamp": {"$last": "$price_history.timestamp"}
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "ID": "$id",
+                "Spieler": "$name",
+                "Aktueller_Marktwert": "$latest_price",
+                "Letztes_Update": "$latest_timestamp"
+            }
+        }
+    ]
+
+    result = list(players.aggregate(pipeline))
+    df = pd.DataFrame(result)
+    
+    if not df.empty:
+        df["Letztes_Update"] = pd.to_datetime(df["Letztes_Update"])
+    
+    return df
+
+
+def get_player_points_with_market_value_df(db: MongoClient):
+    """Get player points data combined with current market value"""
+    players = db["Players"]
+
+    # Optimized pipeline that combines both operations without memory-intensive sorting
+    pipeline = [
+        {
+            "$project": {
+                "id": 1,
+                "name": 1,
+                "price": 1,
+                "point_history": 1,
+                # Get the last element of price_history array (most recent market value)
+                "latest_market_value": {"$last": "$price_history.quotedPrice"}
+            }
+        },
+        {"$unwind": "$point_history"},
+        {"$match": {"point_history.matchday.timestamp": {"$gt": "2024-07-12"}}},
+        {
+            "$group": {
+                "_id": "$id",
+                "Spieler": {"$first": "$name"},
+                "ID": {"$first": "$id"},
+                "Preis": {"$first": "$price"},
+                "Aktueller_Marktwert": {"$first": "$latest_market_value"},
+                "total_points": {"$sum": "$point_history.points"},
+                "games_count": {"$sum": 1}
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "ID": 1,
+                "Spieler": 1,
+                "Preis": 1,
+                "Aktueller_Marktwert": 1,
+                "Punkte": "$total_points",
+                "Spiele": "$games_count",
+                "PpS": {
+                    "$round": [
+                        {"$divide": ["$total_points", "$games_count"]}, 
+                        2
+                    ]
+                }
+            }
+        }
+    ]
+    
+    # Execute the optimized pipeline
+    result = list(players.aggregate(pipeline))
+    df = pd.DataFrame(result)
+    
+    if not df.empty:
+        df["Punkte"] = pd.to_numeric(df["Punkte"], downcast="integer")
+    
+    return df

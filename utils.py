@@ -25,7 +25,7 @@ def plot_player_market_value(
         date_to = "2024-06-30"
     elif spielzeit == "2025/2026":
         date_from = "2025-06-30"
-        date_to = "2026-06-31"
+        date_to = "2026-06-30"
     print(spielzeit)
     print(date_from, date_to)
     buy_date = pd.to_datetime(buy_date).date()
