@@ -23,7 +23,7 @@ page = st.sidebar.radio(
 )
 
 st.title("Comunio App")
-spielzeit = st.selectbox("Spielzeit", ["2024/2025", "2023/2024"], index=0)
+spielzeit = st.selectbox("Spielzeit", ["2025/2026","2024/2025", "2023/2024"], index=0)
 
 
 @st.cache_data

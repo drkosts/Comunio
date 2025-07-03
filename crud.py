@@ -12,6 +12,9 @@ def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
     elif spielzeit == "2023/2024":
         date_from = "2023-06-01"
         date_to = "2024-06-31"
+    elif spielzeit == "2025/2026":
+        date_from = "2025-07-01"
+        date_to = "2026-06-31"
     transfers_collection: Collection = db.get_collection("Transfers")
     transfers = list(
         transfers_collection.find(
