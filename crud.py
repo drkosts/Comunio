@@ -3,7 +3,7 @@ import time
 from pymongo.collection import Collection
 import pandas as pd
 from datetime import datetime
-
+import logging
 
 def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
     if spielzeit == "2024/2025":
@@ -13,12 +13,12 @@ def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
         date_from = "2023-06-01"
         date_to = "2024-06-31"
     elif spielzeit == "2025/2026":
-        date_from = "2025-07-01"
+        date_from = "2025-06-30"
         date_to = "2026-06-31"
     transfers_collection: Collection = db.get_collection("Transfers")
     transfers = list(
         transfers_collection.find(
-            {"buy.date": {"$gt": date_from, "$lt": date_to}}, {"_id": 0}
+            {"buy.date": {"$gte": date_from, "$lte": date_to}}, {"_id": 0}
         )
     )
     transfer_array = []
@@ -51,7 +51,7 @@ def get_transfers(db: MongoClient, spielzeit: str = "2024/2025") -> list:
                 "Gewinn/Verlust pro Tag": profit_per_day,
             }
         )
-
+    logging.info(transfer_array)
     return pd.DataFrame(transfer_array)
 
 
@@ -62,6 +62,9 @@ def count_second_bids(db: MongoClient, spielzeit: str = "2024/2025"):
     elif spielzeit == "2023/2024":
         date_from = "2023-06-01"
         date_to = "2024-06-31"
+    elif spielzeit == "2025/2026":
+        date_from = "2025-06-30"
+        date_to = "2026-06-31"
     transfers_collection: Collection = db.get_collection("Transfers")
     pipeline = [
         {"$match": {"buy.date": {"$gt": date_from, "$lt": date_to}}},
@@ -87,6 +90,9 @@ def count_transfers_buys(db: MongoClient, spielzeit: str = "2024/2025"):
     elif spielzeit == "2023/2024":
         date_from = "2023-06-01"
         date_to = "2024-06-31"
+    elif spielzeit == "2025/2026":
+        date_from = "2025-06-30"
+        date_to = "2026-06-31"
     transfers_collection: Collection = db.get_collection("Transfers")
     pipeline = [
         {"$match": {"buy.date": {"$gt": date_from, "$lt": date_to}}},
