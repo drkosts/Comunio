@@ -287,9 +287,20 @@ def plot_profit_by_price_buckets(member_transfers):
     st.plotly_chart(fig)
 
 
-
 def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_name, spielzeit):
     """Create an interactive portfolio timeline chart"""
+    
+    # Check if we have any data to plot
+    if investment_timeline.empty and market_value_timeline.empty:
+        # Return empty figure
+        fig = go.Figure()
+        fig.add_annotation(
+            text="Keine Daten verfügbar",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, xanchor='center', yanchor='middle',
+            showarrow=False, font_size=20
+        )
+        return fig
     
     # Create subplots
     fig = make_subplots(
@@ -306,14 +317,14 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
     )
     
     # Plot 1: Total Portfolio Value vs Starting Budget
-    if not investment_timeline.empty:
-        # Total portfolio value (cash + investments)
+    if not investment_timeline.empty and 'Gesamtwert' in investment_timeline.columns:
+        # Total portfolio value (cash + current market values)
         fig.add_trace(
             go.Scatter(
                 x=investment_timeline['Datum'],
                 y=investment_timeline['Gesamtwert'],
                 mode='lines+markers',
-                name='Gesamtwert (Cash + Investments)',
+                name='Gesamtwert (Cash + Aktuelle Marktwerte)',
                 line=dict(color='blue', width=3),
                 marker=dict(size=6),
                 hovertemplate='<b>Datum:</b> %{x}<br>' +
@@ -328,70 +339,85 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
             y=40_000_000, 
             line_dash="dash", 
             line_color="gray",
-            annotation_text="Startbudget: €40.000.000"
+            annotation_text="Startbudget: €40.000.000",
+            row=1, col=1
         )
         
-        # Add current market value if available
-        if not market_value_timeline.empty:
-            # Calculate total value including cash for market value timeline
-            # We need to estimate cash at each market value point
-            if len(investment_timeline) > 0:
-                latest_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
-                market_total_value = market_value_timeline['Marktwert_Gesamt'] + latest_cash
-                
-                fig.add_trace(
-                    go.Scatter(
-                        x=market_value_timeline['Datum'],
-                        y=market_total_value,
-                        mode='lines+markers',
-                        name='Aktueller Gesamtwert (Marktwerte + Cash)',
-                        line=dict(color='green', width=2),
-                        marker=dict(size=6),
-                        hovertemplate='<b>Datum:</b> %{x}<br>' +
-                                      '<b>Aktueller Gesamtwert:</b> €%{y:,.0f}<br>' +
-                                      '<extra></extra>'
-                    ),
-                    row=1, col=1
-                )
+        # Add purchase value line for comparison
+        if 'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Verfuegbares_Cash' in investment_timeline.columns:
+            purchase_total_value = investment_timeline['Portfolio_Wert_Kaufpreis'] + investment_timeline['Verfuegbares_Cash']
+            fig.add_trace(
+                go.Scatter(
+                    x=investment_timeline['Datum'],
+                    y=purchase_total_value,
+                    mode='lines',
+                    name='Gesamtwert (Cash + Kaufpreise)',
+                    line=dict(color='lightblue', width=2, dash='dot'),
+                    hovertemplate='<b>Datum:</b> %{x}<br>' +
+                                  '<b>Gesamtwert (Kaufpreise):</b> €%{y:,.0f}<br>' +
+                                  '<extra></extra>'
+                ),
+                row=1, col=1
+            )
     
     # Plot 2: Cash vs Investment Allocation
     if not investment_timeline.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=investment_timeline['Datum'],
-                y=investment_timeline['Verfuegbares_Cash'],
-                mode='lines+markers',
-                name='Verfügbares Cash',
-                line=dict(color='orange', width=2),
-                marker=dict(size=6),
-                fill='tonexty',
-                hovertemplate='<b>Datum:</b> %{x}<br>' +
-                              '<b>Cash:</b> €%{y:,.0f}<br>' +
-                              '<extra></extra>',
-                showlegend=True
-            ),
-            row=2, col=1
-        )
+        if 'Verfuegbares_Cash' in investment_timeline.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=investment_timeline['Datum'],
+                    y=investment_timeline['Verfuegbares_Cash'],
+                    mode='lines+markers',
+                    name='Verfügbares Cash',
+                    line=dict(color='orange', width=2),
+                    marker=dict(size=6),
+                    fill='tonexty',
+                    hovertemplate='<b>Datum:</b> %{x}<br>' +
+                                  '<b>Cash:</b> €%{y:,.0f}<br>' +
+                                  '<extra></extra>',
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
         
-        fig.add_trace(
-            go.Scatter(
-                x=investment_timeline['Datum'],
-                y=investment_timeline['Portfolio_Wert_Kaufpreis'],
-                mode='lines+markers',
-                name='Investiert in Spieler',
-                line=dict(color='purple', width=2),
-                marker=dict(size=6),
-                fill='tozeroy',
-                hovertemplate='<b>Datum:</b> %{x}<br>' +
-                              '<b>Investiert:</b> €%{y:,.0f}<br>' +
-                              '<extra></extra>',
-                showlegend=True
-            ),
-            row=2, col=1
-        )
+        # Show both purchase value and current market value
+        if 'Portfolio_Wert_Kaufpreis' in investment_timeline.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=investment_timeline['Datum'],
+                    y=investment_timeline['Portfolio_Wert_Kaufpreis'],
+                    mode='lines+markers',
+                    name='Investiert (Kaufpreise)',
+                    line=dict(color='purple', width=2, dash='dot'),
+                    marker=dict(size=4),
+                    hovertemplate='<b>Datum:</b> %{x}<br>' +
+                                  '<b>Investiert (Kaufpreis):</b> €%{y:,.0f}<br>' +
+                                  '<extra></extra>',
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
+        
+        if 'Portfolio_Wert_Aktuell' in investment_timeline.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=investment_timeline['Datum'],
+                    y=investment_timeline['Portfolio_Wert_Aktuell'],
+                    mode='lines+markers',
+                    name='Investiert (Aktuelle Marktwerte)',
+                    line=dict(color='green', width=2),
+                    marker=dict(size=6),
+                    fill='tozeroy',
+                    hovertemplate='<b>Datum:</b> %{x}<br>' +
+                                  '<b>Investiert (Marktwert):</b> €%{y:,.0f}<br>' +
+                                  '<extra></extra>',
+                    showlegend=True
+                ),
+                row=2, col=1
+            )
     
     # Plot 3: Number of Players
-    if not investment_timeline.empty:
+    if not investment_timeline.empty and 'Anzahl_Spieler' in investment_timeline.columns:
         fig.add_trace(
             go.Scatter(
                 x=investment_timeline['Datum'],
@@ -409,7 +435,7 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
         )
     
     # Add buy/sell markers to the main chart
-    if not investment_timeline.empty:
+    if not investment_timeline.empty and all(col in investment_timeline.columns for col in ['Event_Type', 'Event_Player', 'Event_Price', 'Gesamtwert']):
         buy_events = investment_timeline[investment_timeline['Event_Type'] == 'buy']
         sell_events = investment_timeline[investment_timeline['Event_Type'] == 'sell']
         
@@ -470,4 +496,3 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
     fig.update_yaxes(title_text="Anzahl Spieler", row=3, col=1)
     
     return fig
-

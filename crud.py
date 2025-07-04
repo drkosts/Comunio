@@ -382,7 +382,6 @@ def get_player_points_with_market_value_df(db: MongoClient):
     
     return df
 
-
 def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
     """Get portfolio value timeline for a specific user in a specific season"""
     
@@ -405,7 +404,7 @@ def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "20
     
     # Add starting point
     timeline_data.append({
-        'Datum': pd.to_datetime(date_from).date(),  # Only date, no time
+        'Datum': pd.to_datetime(date_from).date(),
         'Portfolio_Wert_Kaufpreis': 0,
         'Verfuegbares_Cash': available_cash,
         'Gesamtwert': available_cash,
@@ -417,6 +416,9 @@ def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "20
     
     if not user_transfers:
         return pd.DataFrame(timeline_data)
+    
+    # Get players collection for market value lookups
+    players_collection = db["Players"]
     
     # Create all events
     all_events = []
@@ -447,6 +449,11 @@ def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "20
     # Process events and calculate portfolio value at each point
     for event in all_events:
         event_date = event['date']
+        # Convert to date object for comparison (removes time/timezone issues)
+        if isinstance(event_date, str):
+            event_date_obj = pd.to_datetime(event_date).date()
+        else:
+            event_date_obj = pd.to_datetime(event_date).date()
         
         if event['type'] == 'buy':
             available_cash -= event['price']
@@ -462,11 +469,51 @@ def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "20
         
         # Calculate current portfolio values
         total_investment = sum(player['buy_price'] for player in portfolio_players.values())
-        total_value = total_investment + available_cash
+        
+        # Calculate current market value of all players in portfolio
+        current_market_value = 0
+        for player_id in portfolio_players.keys():
+            player = players_collection.find_one({"id": int(player_id)})
+            if player and 'price_history' in player:
+                # Find market value closest to event_date
+                price_history = player['price_history']
+                
+                # Filter price history up to event_date (using dates only)
+                valid_prices = []
+                for entry in price_history:
+                    try:
+                        # Convert timestamp to date for comparison
+                        if isinstance(entry['timestamp'], str):
+                            entry_date = pd.to_datetime(entry['timestamp']).date()
+                        else:
+                            entry_date = pd.to_datetime(entry['timestamp']).date()
+                        
+                        # Simple date comparison (no timezone issues)
+                        if entry_date <= event_date_obj:
+                            valid_prices.append(entry)
+                    except (ValueError, TypeError, KeyError):
+                        # Skip entries with invalid timestamps
+                        continue
+                
+                if valid_prices:
+                    # Get the most recent price before or on event_date
+                    # Sort by timestamp to get the latest one
+                    latest_price = max(valid_prices, key=lambda x: x['timestamp'])
+                    current_market_value += latest_price['quotedPrice']
+                else:
+                    # Fallback to buy price if no market data available
+                    current_market_value += portfolio_players[player_id]['buy_price']
+            else:
+                # Fallback to buy price if player not found
+                current_market_value += portfolio_players[player_id]['buy_price']
+        
+        # Total value = available cash + current market value of players
+        total_value = available_cash + current_market_value
         
         timeline_data.append({
-            'Datum': pd.to_datetime(event_date).date(),  # Only date, no time
+            'Datum': event_date_obj,
             'Portfolio_Wert_Kaufpreis': total_investment,
+            'Portfolio_Wert_Aktuell': current_market_value,
             'Verfuegbares_Cash': available_cash,
             'Gesamtwert': total_value,
             'Anzahl_Spieler': len(portfolio_players),
@@ -499,8 +546,8 @@ def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielz
     player_ids = [transfer['player_id'] for transfer in current_players_transfers]
     
     # Sample dates (weekly from season start to now)
-    start_date = pd.to_datetime(date_from)
-    end_date = min(pd.to_datetime(date_to), pd.to_datetime('today'))
+    start_date = pd.to_datetime(date_from).date()
+    end_date = min(pd.to_datetime(date_to).date(), pd.to_datetime('today').date())
     
     # Create weekly date range
     date_range = pd.date_range(start=start_date, end=end_date, freq='W')
@@ -508,7 +555,8 @@ def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielz
     timeline_data = []
     players_collection = db["Players"]
     
-    for sample_date in date_range:
+    for sample_datetime in date_range:
+        sample_date = sample_datetime.date()  # Convert to date for comparison
         total_market_value = 0
         valid_players = 0
         
@@ -518,21 +566,31 @@ def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielz
                 # Find market value closest to sample_date
                 price_history = player['price_history']
                 
-                # Filter price history up to sample_date
-                valid_prices = [
-                    entry for entry in price_history 
-                    if pd.to_datetime(entry['timestamp']) <= sample_date
-                ]
+                # Filter price history up to sample_date (using dates only)
+                valid_prices = []
+                for entry in price_history:
+                    try:
+                        # Convert timestamp to date for comparison
+                        if isinstance(entry['timestamp'], str):
+                            entry_date = pd.to_datetime(entry['timestamp']).date()
+                        else:
+                            entry_date = pd.to_datetime(entry['timestamp']).date()
+                        
+                        # Simple date comparison
+                        if entry_date <= sample_date:
+                            valid_prices.append(entry)
+                    except (ValueError, TypeError, KeyError):
+                        continue
                 
                 if valid_prices:
                     # Get the most recent price before or on sample_date
-                    latest_price = max(valid_prices, key=lambda x: pd.to_datetime(x['timestamp']))
+                    latest_price = max(valid_prices, key=lambda x: x['timestamp'])
                     total_market_value += latest_price['quotedPrice']
                     valid_players += 1
         
         if valid_players > 0:
             timeline_data.append({
-                'Datum': sample_date.date(),  # Only date, no time
+                'Datum': sample_date,
                 'Marktwert_Gesamt': total_market_value,
                 'Anzahl_Spieler': valid_players
             })

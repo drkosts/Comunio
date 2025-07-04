@@ -120,7 +120,7 @@ def display_timeline_stats(investment_timeline, market_value_timeline):
             has_transactions = len(investment_timeline[investment_timeline['Event_Type'] != 'start']) > 0
             
             if has_transactions:
-                # Calculate total performance vs starting budget
+                # Calculate total performance vs starting budget using CURRENT market values
                 current_total_value = investment_timeline['Gesamtwert'].iloc[-1]
                 total_gain_loss = current_total_value - STARTING_BUDGET
                 total_gain_loss_pct = (total_gain_loss / STARTING_BUDGET * 100)
@@ -130,46 +130,34 @@ def display_timeline_stats(investment_timeline, market_value_timeline):
                     f"{total_gain_loss:+,.0f} €",
                     delta=f"{total_gain_loss_pct:+.1f}%"
                 )
+                
+                # Show unrealized gains/losses if available
+                if 'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Portfolio_Wert_Aktuell' in investment_timeline.columns:
+                    current_investment = investment_timeline['Portfolio_Wert_Kaufpreis'].iloc[-1]
+                    current_market_value = investment_timeline['Portfolio_Wert_Aktuell'].iloc[-1]
+                    
+                    if current_investment > 0:  # Only show if actually invested
+                        unrealized_gain = current_market_value - current_investment
+                        unrealized_gain_pct = (unrealized_gain / current_investment * 100)
+                        
+                        st.metric(
+                            "Unrealisierter Gewinn/Verlust", 
+                            f"{unrealized_gain:+,.0f} €",
+                            delta=f"{unrealized_gain_pct:+.1f}%"
+                        )
+                    else:
+                        st.info("Noch keine Spieler im Portfolio")
             else:
                 st.metric(
                     "Gesamt Performance vs. Startbudget", 
                     "0 €",
                     delta="Keine Transaktionen"
                 )
-            
-            # Add market value comparison if available
-            if (has_transactions and not market_value_timeline.empty and 'Marktwert_Gesamt' in market_value_timeline.columns and 
-                'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Verfuegbares_Cash' in investment_timeline.columns):
-                
-                current_investment = investment_timeline['Portfolio_Wert_Kaufpreis'].iloc[-1]
-                current_market_value = market_value_timeline['Marktwert_Gesamt'].iloc[-1]
-                current_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
-                
-                if current_investment > 0:  # Only show if actually invested
-                    unrealized_gain = current_market_value - current_investment
-                    unrealized_gain_pct = (unrealized_gain / current_investment * 100)
-                    
-                    st.metric(
-                        "Unrealisierter Gewinn/Verlust", 
-                        f"{unrealized_gain:+,.0f} €",
-                        delta=f"{unrealized_gain_pct:+.1f}%"
-                    )
-                    
-                    # Total portfolio with current market values
-                    total_current_value = current_market_value + current_cash
-                    total_current_performance = total_current_value - STARTING_BUDGET
-                    total_current_performance_pct = (total_current_performance / STARTING_BUDGET * 100)
-                    
-                    st.metric(
-                        "Aktuelle Performance (Marktwerte)", 
-                        f"{total_current_performance:+,.0f} €",
-                        delta=f"{total_current_performance_pct:+.1f}%"
-                    )
-                else:
-                    st.info("Noch keine Spieler im Portfolio")
         
         with col2:
             st.subheader("📈 Budget Allocation")
+            
+            has_transactions = len(investment_timeline[investment_timeline['Event_Type'] != 'start']) > 0
             
             if has_transactions and 'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Verfuegbares_Cash' in investment_timeline.columns:
                 current_investment = investment_timeline['Portfolio_Wert_Kaufpreis'].iloc[-1]
@@ -183,11 +171,11 @@ def display_timeline_stats(investment_timeline, market_value_timeline):
                 
                 # Show if over-invested (borrowed money)
                 if current_cash < 0:
-                    st.error(f"⚠️ Überzogen: {abs(current_cash):,.0f} € über Budget!")
+                    st.error(f"⚠️ Überzogen: {abs(current_cash):,.0f} € über budget!")
                 
                 # Efficiency metrics
-                if len(market_value_timeline) >= 2 and 'Marktwert_Gesamt' in market_value_timeline.columns:
-                    value_trend = market_value_timeline['Marktwert_Gesamt'].iloc[-1] - market_value_timeline['Marktwert_Gesamt'].iloc[-2]
+                if len(investment_timeline) >= 2 and 'Gesamtwert' in investment_timeline.columns:
+                    value_trend = investment_timeline['Gesamtwert'].iloc[-1] - investment_timeline['Gesamtwert'].iloc[-2]
                     if value_trend > 0:
                         st.success(f"📈 Portfolio Trend: +{value_trend:,.0f} €")
                     elif value_trend < 0:
