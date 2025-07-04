@@ -196,7 +196,7 @@ def display_team_grid(db, team_df, spielzeit):
                         player_points=player_points,
                         player_name=selected_row["Spieler"].values[0],
                         buy_date=selected_row["Kaufdatum"].values[0],
-                        sell_date=None,  # No sell date for current players
-                        sell_price=None,  # No sell price for current players
+                        sell_date="",  # No sell date for current players
+                        sell_price="",  # No sell price for current players
                         spielzeit=spielzeit,
                     )
