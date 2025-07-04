@@ -3,7 +3,7 @@ import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import crud
 import utils
-
+import plotly.express as px
 
 def show(db, transfers, spielzeit):
     """Display the Home page with current team overview"""
@@ -30,8 +30,174 @@ def show(db, transfers, spielzeit):
     # Display team statistics
     display_team_stats(current_team)
     
-    # Configure and display the team grid
-    display_team_grid(db, current_team, spielzeit)
+    # Add portfolio timeline section
+    st.subheader("📈 Portfolio Entwicklung")
+    
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["📊 Aktuelles Team", "📈 Portfolio Timeline"])
+    
+    with tab1:
+        # Configure and display the team grid
+        display_team_grid(db, current_team, spielzeit)
+    
+    with tab2:
+        display_portfolio_timeline(db, selected_user, spielzeit)
+
+def display_portfolio_timeline(db, user_name, spielzeit):
+    """Display portfolio timeline analysis"""
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.info("📊 **Investment Timeline**\nZeigt Käufe und Verkäufe über die Zeit")
+    
+    with col2:
+        st.info("💰 **Marktwert Timeline**\nZeigt die Entwicklung des Portfolio-Marktwerts")
+    
+    # Get timeline data
+    with st.spinner("Lade Portfolio Timeline..."):
+        investment_timeline = crud.get_portfolio_timeline(db, user_name, spielzeit)
+        market_value_timeline = crud.get_portfolio_current_value_timeline(db, user_name, spielzeit)
+    
+    if investment_timeline.empty and market_value_timeline.empty:
+        st.warning("Keine Timeline-Daten verfügbar für den ausgewählten Benutzer.")
+        return
+    
+    # Create and display the timeline chart
+    timeline_chart = utils.plot_portfolio_timeline(
+        investment_timeline, 
+        market_value_timeline, 
+        user_name, 
+        spielzeit
+    )
+    
+    st.plotly_chart(timeline_chart, use_container_width=True)
+    
+    # Display timeline statistics
+    if not investment_timeline.empty or not market_value_timeline.empty:
+        display_timeline_stats(investment_timeline, market_value_timeline)
+
+def display_timeline_stats(investment_timeline, market_value_timeline):
+    """Display timeline statistics"""
+    
+    st.subheader("📊 Timeline Statistiken")
+    
+    STARTING_BUDGET = 40_000_000
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if not investment_timeline.empty:
+            # Count actual transactions (exclude the starting point)
+            transactions = investment_timeline[investment_timeline['Event_Type'] != 'start']
+            total_transactions = len(transactions)
+            st.metric("Transaktionen", total_transactions)
+    
+    with col2:
+        if not investment_timeline.empty:
+            buy_events = investment_timeline[investment_timeline['Event_Type'] == 'buy'] if 'Event_Type' in investment_timeline.columns else pd.DataFrame()
+            sell_events = investment_timeline[investment_timeline['Event_Type'] == 'sell'] if 'Event_Type' in investment_timeline.columns else pd.DataFrame()
+            st.metric("Käufe / Verkäufe", f"{len(buy_events)} / {len(sell_events)}")
+    
+    with col3:
+        if not investment_timeline.empty and 'Verfuegbares_Cash' in investment_timeline.columns:
+            current_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
+            st.metric("Verfügbares Cash", f"{current_cash:,.0f} €")
+    
+    with col4:
+        if not investment_timeline.empty and 'Anzahl_Spieler' in investment_timeline.columns:
+            max_players = investment_timeline['Anzahl_Spieler'].max()
+            st.metric("Max. Spieler", max_players)
+    
+    # Performance metrics
+    if not investment_timeline.empty and 'Gesamtwert' in investment_timeline.columns:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("💰 Performance Metriken")
+            
+            # Check if user has made any transactions
+            has_transactions = len(investment_timeline[investment_timeline['Event_Type'] != 'start']) > 0
+            
+            if has_transactions:
+                # Calculate total performance vs starting budget
+                current_total_value = investment_timeline['Gesamtwert'].iloc[-1]
+                total_gain_loss = current_total_value - STARTING_BUDGET
+                total_gain_loss_pct = (total_gain_loss / STARTING_BUDGET * 100)
+                
+                st.metric(
+                    "Gesamt Performance vs. Startbudget", 
+                    f"{total_gain_loss:+,.0f} €",
+                    delta=f"{total_gain_loss_pct:+.1f}%"
+                )
+            else:
+                st.metric(
+                    "Gesamt Performance vs. Startbudget", 
+                    "0 €",
+                    delta="Keine Transaktionen"
+                )
+            
+            # Add market value comparison if available
+            if (has_transactions and not market_value_timeline.empty and 'Marktwert_Gesamt' in market_value_timeline.columns and 
+                'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Verfuegbares_Cash' in investment_timeline.columns):
+                
+                current_investment = investment_timeline['Portfolio_Wert_Kaufpreis'].iloc[-1]
+                current_market_value = market_value_timeline['Marktwert_Gesamt'].iloc[-1]
+                current_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
+                
+                if current_investment > 0:  # Only show if actually invested
+                    unrealized_gain = current_market_value - current_investment
+                    unrealized_gain_pct = (unrealized_gain / current_investment * 100)
+                    
+                    st.metric(
+                        "Unrealisierter Gewinn/Verlust", 
+                        f"{unrealized_gain:+,.0f} €",
+                        delta=f"{unrealized_gain_pct:+.1f}%"
+                    )
+                    
+                    # Total portfolio with current market values
+                    total_current_value = current_market_value + current_cash
+                    total_current_performance = total_current_value - STARTING_BUDGET
+                    total_current_performance_pct = (total_current_performance / STARTING_BUDGET * 100)
+                    
+                    st.metric(
+                        "Aktuelle Performance (Marktwerte)", 
+                        f"{total_current_performance:+,.0f} €",
+                        delta=f"{total_current_performance_pct:+.1f}%"
+                    )
+                else:
+                    st.info("Noch keine Spieler im Portfolio")
+        
+        with col2:
+            st.subheader("📈 Budget Allocation")
+            
+            if has_transactions and 'Portfolio_Wert_Kaufpreis' in investment_timeline.columns and 'Verfuegbares_Cash' in investment_timeline.columns:
+                current_investment = investment_timeline['Portfolio_Wert_Kaufpreis'].iloc[-1]
+                current_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
+                
+                investment_pct = (current_investment / STARTING_BUDGET * 100)
+                cash_pct = (current_cash / STARTING_BUDGET * 100)
+                
+                st.metric("% in Spielern investiert", f"{investment_pct:.1f}%")
+                st.metric("% als Cash verfügbar", f"{cash_pct:.1f}%")
+                
+                # Show if over-invested (borrowed money)
+                if current_cash < 0:
+                    st.error(f"⚠️ Überzogen: {abs(current_cash):,.0f} € über Budget!")
+                
+                # Efficiency metrics
+                if len(market_value_timeline) >= 2 and 'Marktwert_Gesamt' in market_value_timeline.columns:
+                    value_trend = market_value_timeline['Marktwert_Gesamt'].iloc[-1] - market_value_timeline['Marktwert_Gesamt'].iloc[-2]
+                    if value_trend > 0:
+                        st.success(f"📈 Portfolio Trend: +{value_trend:,.0f} €")
+                    elif value_trend < 0:
+                        st.error(f"📉 Portfolio Trend: {value_trend:,.0f} €")
+                    else:
+                        st.info("➡️ Portfolio stabil")
+            elif not has_transactions:
+                st.info("💰 Vollständig in Cash (100%)\n\nNoch keine Investitionen getätigt")
+            else:
+                st.warning("Keine Allokationsdaten verfügbar")
 
 
 def get_current_team(db, user_name, spielzeit):

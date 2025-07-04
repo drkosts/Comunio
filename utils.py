@@ -2,7 +2,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from unidecode import unidecode
-
+from crud import get_date_range
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 def normalize_string(s: str) -> str:
     return unidecode(s).lower()
@@ -13,19 +15,11 @@ def plot_player_market_value(
     player_points: pd.DataFrame,
     player_name: str,
     buy_date: str,
-    sell_date: str = None,
-    sell_price: str = None,
+    sell_date: str = "",
+    sell_price: str = "",
     spielzeit: str = "2024/2025",
 ) -> None:
-    if spielzeit == "2024/2025":
-        date_from = "2024-07-01"
-        date_to = "2025-06-30"
-    elif spielzeit == "2023/2024":
-        date_from = "2023-06-01"
-        date_to = "2024-06-30"
-    elif spielzeit == "2025/2026":
-        date_from = "2025-06-30"
-        date_to = "2026-06-30"
+    date_from, date_to = get_date_range(spielzeit)
     print(spielzeit)
     print(date_from, date_to)
     buy_date = pd.to_datetime(buy_date).date()
@@ -146,7 +140,7 @@ def plot_player_market_value(
 
 
 def plot_total_points_vs_price(
-    player_points: pd.DataFrame, search_value: str = None
+    player_points: pd.DataFrame, search_value: str = ""
 ) -> None:
 
     # Create the scatter plot
@@ -205,7 +199,7 @@ def plot_total_points_vs_price(
 
 
 def plot_average_points_vs_price(
-    player_points: pd.DataFrame, search_value: str = None
+    player_points: pd.DataFrame, search_value: str = ""
 ) -> None:
     # make scatter plot of Punkte vs Preis
     fig = go.Figure()
@@ -291,3 +285,189 @@ def plot_profit_by_price_buckets(member_transfers):
         xaxis=dict(tickvals=bin_data["Kaufpreis_bins"], ticktext=bin_labels),
     )
     st.plotly_chart(fig)
+
+
+
+def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_name, spielzeit):
+    """Create an interactive portfolio timeline chart"""
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=(
+            f'Portfolio Entwicklung - {user_name} ({spielzeit})',
+            'Cash vs. Investment Allocation',
+            'Anzahl Spieler im Portfolio'
+        ),
+        specs=[[{"secondary_y": False}],
+               [{"secondary_y": False}],
+               [{"secondary_y": False}]],
+        vertical_spacing=0.08
+    )
+    
+    # Plot 1: Total Portfolio Value vs Starting Budget
+    if not investment_timeline.empty:
+        # Total portfolio value (cash + investments)
+        fig.add_trace(
+            go.Scatter(
+                x=investment_timeline['Datum'],
+                y=investment_timeline['Gesamtwert'],
+                mode='lines+markers',
+                name='Gesamtwert (Cash + Investments)',
+                line=dict(color='blue', width=3),
+                marker=dict(size=6),
+                hovertemplate='<b>Datum:</b> %{x}<br>' +
+                              '<b>Gesamtwert:</b> €%{y:,.0f}<br>' +
+                              '<extra></extra>'
+            ),
+            row=1, col=1
+        )
+        
+        # Starting budget reference line
+        fig.add_hline(
+            y=40_000_000, 
+            line_dash="dash", 
+            line_color="gray",
+            annotation_text="Startbudget: €40.000.000"
+        )
+        
+        # Add current market value if available
+        if not market_value_timeline.empty:
+            # Calculate total value including cash for market value timeline
+            # We need to estimate cash at each market value point
+            if len(investment_timeline) > 0:
+                latest_cash = investment_timeline['Verfuegbares_Cash'].iloc[-1]
+                market_total_value = market_value_timeline['Marktwert_Gesamt'] + latest_cash
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=market_value_timeline['Datum'],
+                        y=market_total_value,
+                        mode='lines+markers',
+                        name='Aktueller Gesamtwert (Marktwerte + Cash)',
+                        line=dict(color='green', width=2),
+                        marker=dict(size=6),
+                        hovertemplate='<b>Datum:</b> %{x}<br>' +
+                                      '<b>Aktueller Gesamtwert:</b> €%{y:,.0f}<br>' +
+                                      '<extra></extra>'
+                    ),
+                    row=1, col=1
+                )
+    
+    # Plot 2: Cash vs Investment Allocation
+    if not investment_timeline.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=investment_timeline['Datum'],
+                y=investment_timeline['Verfuegbares_Cash'],
+                mode='lines+markers',
+                name='Verfügbares Cash',
+                line=dict(color='orange', width=2),
+                marker=dict(size=6),
+                fill='tonexty',
+                hovertemplate='<b>Datum:</b> %{x}<br>' +
+                              '<b>Cash:</b> €%{y:,.0f}<br>' +
+                              '<extra></extra>',
+                showlegend=True
+            ),
+            row=2, col=1
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=investment_timeline['Datum'],
+                y=investment_timeline['Portfolio_Wert_Kaufpreis'],
+                mode='lines+markers',
+                name='Investiert in Spieler',
+                line=dict(color='purple', width=2),
+                marker=dict(size=6),
+                fill='tozeroy',
+                hovertemplate='<b>Datum:</b> %{x}<br>' +
+                              '<b>Investiert:</b> €%{y:,.0f}<br>' +
+                              '<extra></extra>',
+                showlegend=True
+            ),
+            row=2, col=1
+        )
+    
+    # Plot 3: Number of Players
+    if not investment_timeline.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=investment_timeline['Datum'],
+                y=investment_timeline['Anzahl_Spieler'],
+                mode='lines+markers',
+                name='Anzahl Spieler',
+                line=dict(color='red', width=2),
+                marker=dict(size=6),
+                hovertemplate='<b>Datum:</b> %{x}<br>' +
+                              '<b>Spieler:</b> %{y}<br>' +
+                              '<extra></extra>',
+                showlegend=False
+            ),
+            row=3, col=1
+        )
+    
+    # Add buy/sell markers to the main chart
+    if not investment_timeline.empty:
+        buy_events = investment_timeline[investment_timeline['Event_Type'] == 'buy']
+        sell_events = investment_timeline[investment_timeline['Event_Type'] == 'sell']
+        
+        if not buy_events.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=buy_events['Datum'],
+                    y=buy_events['Gesamtwert'],
+                    mode='markers',
+                    name='Kauf',
+                    marker=dict(color='green', size=12, symbol='triangle-up'),
+                    hovertemplate='<b>Kauf:</b> %{text}<br>' +
+                                  '<b>Preis:</b> €%{customdata:,.0f}<br>' +
+                                  '<extra></extra>',
+                    text=buy_events['Event_Player'],
+                    customdata=buy_events['Event_Price']
+                ),
+                row=1, col=1
+            )
+        
+        if not sell_events.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=sell_events['Datum'],
+                    y=sell_events['Gesamtwert'],
+                    mode='markers',
+                    name='Verkauf',
+                    marker=dict(color='red', size=12, symbol='triangle-down'),
+                    hovertemplate='<b>Verkauf:</b> %{text}<br>' +
+                                  '<b>Preis:</b> €%{customdata:,.0f}<br>' +
+                                  '<extra></extra>',
+                    text=sell_events['Event_Player'],
+                    customdata=sell_events['Event_Price']
+                ),
+                row=1, col=1
+            )
+    
+    # Update layout
+    fig.update_layout(
+        height=800,
+        showlegend=True,
+        hovermode='x unified',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # Update axes
+    fig.update_xaxes(title_text="Datum", row=1, col=1)
+    fig.update_xaxes(title_text="Datum", row=2, col=1)
+    fig.update_xaxes(title_text="Datum", row=3, col=1)
+    fig.update_yaxes(title_text="Gesamtwert (€)", row=1, col=1)
+    fig.update_yaxes(title_text="Betrag (€)", row=2, col=1)
+    fig.update_yaxes(title_text="Anzahl Spieler", row=3, col=1)
+    
+    return fig
+

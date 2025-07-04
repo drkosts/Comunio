@@ -381,3 +381,160 @@ def get_player_points_with_market_value_df(db: MongoClient):
         df["Punkte"] = pd.to_numeric(df["Punkte"], downcast="integer")
     
     return df
+
+
+def get_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Get portfolio value timeline for a specific user in a specific season"""
+    
+    date_from, date_to = get_date_range(spielzeit)
+    
+    # Starting budget
+    STARTING_BUDGET = 40_000_000  # 40 million euros
+    
+    # Get all transfers for the user in this season
+    transfers_collection = db["Transfers"]
+    user_transfers = list(transfers_collection.find({
+        "member_name": user_name,
+        "buy.date": {"$gte": date_from, "$lte": date_to}
+    }, {"_id": 0}))
+    
+    # Initialize timeline with starting budget
+    timeline_data = []
+    portfolio_players = {}  # Track current portfolio: {player_id: buy_info}
+    available_cash = STARTING_BUDGET
+    
+    # Add starting point
+    timeline_data.append({
+        'Datum': pd.to_datetime(date_from).date(),  # Only date, no time
+        'Portfolio_Wert_Kaufpreis': 0,
+        'Verfuegbares_Cash': available_cash,
+        'Gesamtwert': available_cash,
+        'Anzahl_Spieler': 0,
+        'Event_Type': 'start',
+        'Event_Player': 'Season Start',
+        'Event_Price': 0
+    })
+    
+    if not user_transfers:
+        return pd.DataFrame(timeline_data)
+    
+    # Create all events
+    all_events = []
+    
+    for transfer in user_transfers:
+        # Add buy event
+        all_events.append({
+            'date': transfer['buy']['date'],
+            'type': 'buy',
+            'player_id': transfer['player_id'],
+            'player_name': transfer['player_name'],
+            'price': transfer['buy']['price']
+        })
+        
+        # Add sell event if exists
+        if transfer.get('sell'):
+            all_events.append({
+                'date': transfer['sell']['date'],
+                'type': 'sell',
+                'player_id': transfer['player_id'],
+                'player_name': transfer['player_name'],
+                'price': transfer['sell']['price']
+            })
+    
+    # Sort all events by date
+    all_events.sort(key=lambda x: x['date'])
+    
+    # Process events and calculate portfolio value at each point
+    for event in all_events:
+        event_date = event['date']
+        
+        if event['type'] == 'buy':
+            available_cash -= event['price']
+            portfolio_players[event['player_id']] = {
+                'name': event['player_name'],
+                'buy_price': event['price'],
+                'buy_date': event_date
+            }
+        elif event['type'] == 'sell':
+            if event['player_id'] in portfolio_players:
+                available_cash += event['price']
+                del portfolio_players[event['player_id']]
+        
+        # Calculate current portfolio values
+        total_investment = sum(player['buy_price'] for player in portfolio_players.values())
+        total_value = total_investment + available_cash
+        
+        timeline_data.append({
+            'Datum': pd.to_datetime(event_date).date(),  # Only date, no time
+            'Portfolio_Wert_Kaufpreis': total_investment,
+            'Verfuegbares_Cash': available_cash,
+            'Gesamtwert': total_value,
+            'Anzahl_Spieler': len(portfolio_players),
+            'Event_Type': event['type'],
+            'Event_Player': event['player_name'],
+            'Event_Price': event['price']
+        })
+    
+    return pd.DataFrame(timeline_data)
+
+
+def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Get portfolio current market value timeline (sample at weekly intervals)"""
+    
+    # Get current team
+    date_from, date_to = get_date_range(spielzeit)
+    transfers_collection = db["Transfers"]
+    
+    # Get current players (bought but not sold)
+    current_players_transfers = list(transfers_collection.find({
+        "member_name": user_name,
+        "buy.date": {"$gte": date_from, "$lte": date_to},
+        "sell": {"$exists": False}
+    }, {"_id": 0}))
+    
+    if not current_players_transfers:
+        return pd.DataFrame()
+    
+    # Get player IDs
+    player_ids = [transfer['player_id'] for transfer in current_players_transfers]
+    
+    # Sample dates (weekly from season start to now)
+    start_date = pd.to_datetime(date_from)
+    end_date = min(pd.to_datetime(date_to), pd.to_datetime('today'))
+    
+    # Create weekly date range
+    date_range = pd.date_range(start=start_date, end=end_date, freq='W')
+    
+    timeline_data = []
+    players_collection = db["Players"]
+    
+    for sample_date in date_range:
+        total_market_value = 0
+        valid_players = 0
+        
+        for player_id in player_ids:
+            player = players_collection.find_one({"id": int(player_id)})
+            if player and 'price_history' in player:
+                # Find market value closest to sample_date
+                price_history = player['price_history']
+                
+                # Filter price history up to sample_date
+                valid_prices = [
+                    entry for entry in price_history 
+                    if pd.to_datetime(entry['timestamp']) <= sample_date
+                ]
+                
+                if valid_prices:
+                    # Get the most recent price before or on sample_date
+                    latest_price = max(valid_prices, key=lambda x: pd.to_datetime(x['timestamp']))
+                    total_market_value += latest_price['quotedPrice']
+                    valid_players += 1
+        
+        if valid_players > 0:
+            timeline_data.append({
+                'Datum': sample_date.date(),  # Only date, no time
+                'Marktwert_Gesamt': total_market_value,
+                'Anzahl_Spieler': valid_players
+            })
+    
+    return pd.DataFrame(timeline_data)
