@@ -4,6 +4,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import crud
 import utils
 import plotly.express as px
+import time
 
 def show(db, transfers, spielzeit):
     """Display the Home page with current team overview"""
@@ -54,10 +55,22 @@ def display_portfolio_timeline(db, user_name, spielzeit):
     with col2:
         st.info("💰 **Marktwert Timeline**\nZeigt die Entwicklung des Portfolio-Marktwerts")
     
-    # Get timeline data
+    # Add cache control
+    col1, col2 = st.columns([3, 1])
+    # with col2:
+        # if st.button("🔄 Cache leeren", help="Neuberechnung erzwingen"):
+        #     deleted_count = crud.clear_portfolio_cache(db, user_name, spielzeit)
+        #     st.success(f"Cache geleert: {deleted_count} Einträge")
+        #     st.rerun()
+    
+    # Get timeline data (will use cache if available)
     with st.spinner("Lade Portfolio Timeline..."):
-        investment_timeline = crud.get_portfolio_timeline(db, user_name, spielzeit)
-        market_value_timeline = crud.get_portfolio_current_value_timeline(db, user_name, spielzeit)
+        start_time = time.time()
+        investment_timeline = crud.get_or_calculate_portfolio_timeline(db, user_name, spielzeit)
+        market_value_timeline = crud.get_or_calculate_market_value_timeline(db, user_name, spielzeit)
+        end_time = time.time()
+        
+        st.info(f"⚡ Ladezeit: {end_time - start_time:.2f} Sekunden")
     
     if investment_timeline.empty and market_value_timeline.empty:
         st.warning("Keine Timeline-Daten verfügbar für den ausgewählten Benutzer.")

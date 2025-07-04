@@ -596,3 +596,409 @@ def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielz
             })
     
     return pd.DataFrame(timeline_data)
+
+
+def get_or_calculate_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Get portfolio timeline from cache or calculate and cache if not exists"""
+    
+    try:
+        cache_collection = db["PortfolioCache"]
+        cache_key = f"{user_name}_{spielzeit}"
+        
+        # Try to get from cache first
+        cached_result = cache_collection.find_one({"cache_key": cache_key})
+        
+        if cached_result:
+            # Check if cache is still valid
+            cache_date = cached_result.get("calculated_at")
+            if cache_date:
+                timeline_data = cached_result["timeline_data"]
+                df = pd.DataFrame(timeline_data)
+                # Convert date strings back to date objects
+                if not df.empty and 'Datum' in df.columns:
+                    df['Datum'] = pd.to_datetime(df['Datum']).dt.date
+                return df
+        
+        # Calculate if not in cache
+        timeline_df = calculate_portfolio_timeline_optimized(db, user_name, spielzeit)
+        
+        # Save to cache
+        if not timeline_df.empty:
+            # Convert dates to strings for BSON compatibility
+            cache_data = timeline_df.copy()
+            if 'Datum' in cache_data.columns:
+                cache_data['Datum'] = cache_data['Datum'].astype(str)
+            
+            cache_doc = {
+                "cache_key": cache_key,
+                "user_name": user_name,
+                "spielzeit": spielzeit,
+                "timeline_data": cache_data.to_dict('records'),
+                "calculated_at": pd.Timestamp.now().isoformat()
+            }
+            
+            # Upsert to cache (creates collection if it doesn't exist)
+            cache_collection.replace_one(
+                {"cache_key": cache_key}, 
+                cache_doc, 
+                upsert=True
+            )
+            
+        return timeline_df
+        
+    except Exception as e:
+        print(f"Cache error: {e}")
+        # Fallback to direct calculation without caching
+        return calculate_portfolio_timeline_optimized(db, user_name, spielzeit)
+
+
+def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Optimized portfolio timeline calculation with bulk operations"""
+    
+    date_from, date_to = get_date_range(spielzeit)
+    STARTING_BUDGET = 40_000_000
+    
+    # Get all transfers for the user in this season
+    transfers_collection = db["Transfers"]
+    user_transfers = list(transfers_collection.find({
+        "member_name": user_name,
+        "buy.date": {"$gte": date_from, "$lte": date_to}
+    }, {"_id": 0}))
+    
+    if not user_transfers:
+        # Return just starting point
+        return pd.DataFrame([{
+            'Datum': pd.to_datetime(date_from).date(),
+            'Portfolio_Wert_Kaufpreis': 0,
+            'Portfolio_Wert_Aktuell': 0,
+            'Verfuegbares_Cash': STARTING_BUDGET,
+            'Gesamtwert': STARTING_BUDGET,
+            'Anzahl_Spieler': 0,
+            'Event_Type': 'start',
+            'Event_Player': 'Season Start',
+            'Event_Price': 0
+        }])
+    
+    # Get all unique player IDs that this user ever owned
+    all_player_ids = set()
+    for transfer in user_transfers:
+        all_player_ids.add(transfer['player_id'])
+    
+    # Bulk fetch ALL price history for ALL players at once
+    players_collection = db["Players"]
+    players_data = {}
+    
+    for player_doc in players_collection.find(
+        {"id": {"$in": list(map(int, all_player_ids))}}, 
+        {"id": 1, "price_history": 1}
+    ):
+        player_id = str(player_doc["id"])
+        # Pre-process price history into date-sorted format
+        price_history = []
+        for entry in player_doc.get("price_history", []):
+            try:
+                if isinstance(entry['timestamp'], str):
+                    entry_date = pd.to_datetime(entry['timestamp']).date()
+                else:
+                    entry_date = pd.to_datetime(entry['timestamp']).date()
+                
+                price_history.append({
+                    'date': entry_date,
+                    'price': entry['quotedPrice']
+                })
+            except (ValueError, TypeError, KeyError):
+                continue
+        
+        # Sort by date for efficient lookup
+        price_history.sort(key=lambda x: x['date'])
+        players_data[player_id] = price_history
+    
+    # Create all events
+    all_events = []
+    for transfer in user_transfers:
+        all_events.append({
+            'date': transfer['buy']['date'],
+            'type': 'buy',
+            'player_id': transfer['player_id'],
+            'player_name': transfer['player_name'],
+            'price': transfer['buy']['price']
+        })
+        
+        if transfer.get('sell'):
+            all_events.append({
+                'date': transfer['sell']['date'],
+                'type': 'sell',
+                'player_id': transfer['player_id'],
+                'player_name': transfer['player_name'],
+                'price': transfer['sell']['price']
+            })
+    
+    # Sort all events by date
+    all_events.sort(key=lambda x: x['date'])
+    
+    # Initialize timeline
+    timeline_data = []
+    portfolio_players = {}
+    available_cash = STARTING_BUDGET
+    
+    # Add starting point
+    timeline_data.append({
+        'Datum': pd.to_datetime(date_from).date(),
+        'Portfolio_Wert_Kaufpreis': 0,
+        'Portfolio_Wert_Aktuell': 0,
+        'Verfuegbares_Cash': available_cash,
+        'Gesamtwert': available_cash,
+        'Anzahl_Spieler': 0,
+        'Event_Type': 'start',
+        'Event_Player': 'Season Start',
+        'Event_Price': 0
+    })
+    
+    # Process events
+    for event in all_events:
+        event_date = event['date']
+        if isinstance(event_date, str):
+            event_date_obj = pd.to_datetime(event_date).date()
+        else:
+            event_date_obj = pd.to_datetime(event_date).date()
+        
+        # Update portfolio
+        if event['type'] == 'buy':
+            available_cash -= event['price']
+            portfolio_players[event['player_id']] = {
+                'name': event['player_name'],
+                'buy_price': event['price'],
+                'buy_date': event_date
+            }
+        elif event['type'] == 'sell':
+            if event['player_id'] in portfolio_players:
+                available_cash += event['price']
+                del portfolio_players[event['player_id']]
+        
+        # Calculate current values
+        total_investment = sum(player['buy_price'] for player in portfolio_players.values())
+        current_market_value = get_portfolio_market_value_fast(players_data, portfolio_players, event_date_obj)
+        total_value = available_cash + current_market_value
+        
+        timeline_data.append({
+            'Datum': event_date_obj,
+            'Portfolio_Wert_Kaufpreis': total_investment,
+            'Portfolio_Wert_Aktuell': current_market_value,
+            'Verfuegbares_Cash': available_cash,
+            'Gesamtwert': total_value,
+            'Anzahl_Spieler': len(portfolio_players),
+            'Event_Type': event['type'],
+            'Event_Player': event['player_name'],
+            'Event_Price': event['price']
+        })
+    
+    return pd.DataFrame(timeline_data)
+
+
+def get_portfolio_market_value_fast(players_data, portfolio_players, target_date):
+    """Fast market value calculation using pre-loaded price data"""
+    total_market_value = 0
+    
+    for player_id in portfolio_players.keys():
+        if player_id in players_data:
+            price_history = players_data[player_id]
+            
+            # Binary search or linear search for the right price
+            # Since it's sorted by date, we can use bisect for O(log n) lookup
+            valid_price = None
+            for price_entry in reversed(price_history):  # Start from most recent
+                if price_entry['date'] <= target_date:
+                    valid_price = price_entry['price']
+                    break
+            
+            if valid_price is not None:
+                total_market_value += valid_price
+            else:
+                # Fallback to buy price
+                total_market_value += portfolio_players[player_id]['buy_price']
+        else:
+            # Fallback to buy price
+            total_market_value += portfolio_players[player_id]['buy_price']
+    
+    return total_market_value
+
+
+def get_or_calculate_market_value_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Get market value timeline from cache or calculate and cache if not exists"""
+    
+    try:
+        cache_collection = db["MarketValueCache"]
+        cache_key = f"{user_name}_{spielzeit}_market"
+        
+        # Try to get from cache first
+        cached_result = cache_collection.find_one({"cache_key": cache_key})
+        
+        if cached_result:
+            timeline_data = cached_result["timeline_data"]
+            df = pd.DataFrame(timeline_data)
+            # Convert date strings back to date objects
+            if not df.empty and 'Datum' in df.columns:
+                df['Datum'] = pd.to_datetime(df['Datum']).dt.date
+            return df
+        
+        # Calculate if not in cache
+        timeline_df = calculate_market_value_timeline_optimized(db, user_name, spielzeit)
+        
+        # Save to cache
+        if not timeline_df.empty:
+            # Convert dates to strings for BSON compatibility
+            cache_data = timeline_df.copy()
+            if 'Datum' in cache_data.columns:
+                cache_data['Datum'] = cache_data['Datum'].astype(str)
+            
+            cache_doc = {
+                "cache_key": cache_key,
+                "user_name": user_name,
+                "spielzeit": spielzeit,
+                "timeline_data": cache_data.to_dict('records'),
+                "calculated_at": pd.Timestamp.now().isoformat()
+            }
+            
+            cache_collection.replace_one(
+                {"cache_key": cache_key}, 
+                cache_doc, 
+                upsert=True
+            )
+            
+        return timeline_df
+        
+    except Exception as e:
+        print(f"Cache error: {e}")
+        # Fallback to direct calculation without caching
+        return calculate_market_value_timeline_optimized(db, user_name, spielzeit)
+
+def calculate_market_value_timeline_optimized(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
+    """Optimized market value timeline calculation"""
+    
+    date_from, date_to = get_date_range(spielzeit)
+    transfers_collection = db["Transfers"]
+    
+    # Get current players (bought but not sold)
+    current_players_transfers = list(transfers_collection.find({
+        "member_name": user_name,
+        "buy.date": {"$gte": date_from, "$lte": date_to},
+        "sell": {"$exists": False}
+    }, {"_id": 0}))
+    
+    if not current_players_transfers:
+        return pd.DataFrame()
+    
+    # Get player IDs
+    player_ids = [transfer['player_id'] for transfer in current_players_transfers]
+    
+    # Bulk fetch price history for all current players
+    players_collection = db["Players"]
+    players_price_data = {}
+    
+    for player_doc in players_collection.find(
+        {"id": {"$in": list(map(int, player_ids))}}, 
+        {"id": 1, "price_history": 1}
+    ):
+        player_id = str(player_doc["id"])
+        price_history = []
+        for entry in player_doc.get("price_history", []):
+            try:
+                if isinstance(entry['timestamp'], str):
+                    entry_date = pd.to_datetime(entry['timestamp']).date()
+                else:
+                    entry_date = pd.to_datetime(entry['timestamp']).date()
+                
+                price_history.append({
+                    'date': entry_date,
+                    'price': entry['quotedPrice']
+                })
+            except (ValueError, TypeError, KeyError):
+                continue
+        
+        price_history.sort(key=lambda x: x['date'])
+        players_price_data[player_id] = price_history
+    
+    # Sample dates (weekly)
+    start_date = pd.to_datetime(date_from).date()
+    end_date = min(pd.to_datetime(date_to).date(), pd.to_datetime('today').date())
+    date_range = pd.date_range(start=start_date, end=end_date, freq='W')
+    
+    timeline_data = []
+    
+    for sample_datetime in date_range:
+        sample_date = sample_datetime.date()
+        total_market_value = 0
+        valid_players = 0
+        
+        for player_id in player_ids:
+            if player_id in players_price_data:
+                price_history = players_price_data[player_id]
+                
+                # Find the most recent price before or on sample_date
+                valid_price = None
+                for price_entry in reversed(price_history):
+                    if price_entry['date'] <= sample_date:
+                        valid_price = price_entry['price']
+                        break
+                
+                if valid_price is not None:
+                    total_market_value += valid_price
+                    valid_players += 1
+        
+        if valid_players > 0:
+            timeline_data.append({
+                'Datum': sample_date,
+                'Marktwert_Gesamt': total_market_value,
+                'Anzahl_Spieler': valid_players
+            })
+    
+    return pd.DataFrame(timeline_data)
+
+
+def clear_portfolio_cache(db: MongoClient, user_name: str = None, spielzeit: str = None):
+    """Clear portfolio cache for specific user/season or all"""
+    cache_collection = db["PortfolioCache"]
+    market_cache_collection = db["MarketValueCache"]
+    
+    query = {}
+    if user_name:
+        query["user_name"] = user_name
+    if spielzeit:
+        query["spielzeit"] = spielzeit
+    
+    deleted_portfolio = cache_collection.delete_many(query).deleted_count
+    deleted_market = market_cache_collection.delete_many(query).deleted_count
+    
+    return deleted_portfolio + deleted_market
+
+
+def get_cache_status(db: MongoClient) -> pd.DataFrame:
+    """Get status of all cached portfolio calculations"""
+    
+    cache_collection = db["PortfolioCache"]
+    market_cache_collection = db["MarketValueCache"]
+    
+    cache_data = []
+    
+    # Portfolio cache
+    for doc in cache_collection.find({}, {"cache_key": 1, "user_name": 1, "spielzeit": 1, "calculated_at": 1}):
+        cache_data.append({
+            "Type": "Portfolio",
+            "User": doc.get("user_name"),
+            "Season": doc.get("spielzeit"),
+            "Cache Key": doc.get("cache_key"),
+            "Calculated At": doc.get("calculated_at")
+        })
+    
+    # Market value cache
+    for doc in market_cache_collection.find({}, {"cache_key": 1, "user_name": 1, "spielzeit": 1, "calculated_at": 1}):
+        cache_data.append({
+            "Type": "Market Value",
+            "User": doc.get("user_name"),
+            "Season": doc.get("spielzeit"),  
+            "Cache Key": doc.get("cache_key"),
+            "Calculated At": doc.get("calculated_at")
+        })
+    
+    # Always return a DataFrame, even if cache_data is empty
+    return pd.DataFrame(cache_data)

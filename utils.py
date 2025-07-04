@@ -496,3 +496,5 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
     fig.update_yaxes(title_text="Anzahl Spieler", row=3, col=1)
     
     return fig
+
+
