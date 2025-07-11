@@ -6,6 +6,15 @@ from datetime import datetime
 import logging
 from typing import Dict, Tuple
 
+# Configure logging for debugging market value calculations
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
 # Season date ranges configuration
 SEASON_DATE_RANGES: Dict[str, Tuple[str, str]] = {
     "2024/2025": ("2024-07-01", "2025-06-30"),
@@ -688,11 +697,15 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
     players_collection = db["Players"]
     players_data = {}
     
+    logging.info(f"Loading price data for {len(all_player_ids)} unique players")
+    logging.info(f"Player IDs to load: {sorted(all_player_ids)}")
+    
     for player_doc in players_collection.find(
         {"id": {"$in": list(map(int, all_player_ids))}}, 
         {"id": 1, "price_history": 1}
     ):
         player_id = str(player_doc["id"])
+        logging.info(f"Loading price data for player ID: {player_id}")
         # Pre-process price history into date-sorted format
         price_history = []
         for entry in player_doc.get("price_history", []):
@@ -712,6 +725,13 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
         # Sort by date for efficient lookup
         price_history.sort(key=lambda x: x['date'])
         players_data[player_id] = price_history
+        
+        logging.debug(f"Player {player_id}: {len(price_history)} price entries")
+        if price_history:
+            logging.debug(f"  Date range: {price_history[0]['date']} to {price_history[-1]['date']}")
+    
+    logging.info(f"Loaded price data for {len(players_data)} players")
+    logging.info(f"Players loaded: {sorted(players_data.keys())}")
     
     # Create all events
     all_events = []
@@ -799,26 +819,63 @@ def get_portfolio_market_value_fast(players_data, portfolio_players, target_date
     """Fast market value calculation using pre-loaded price data"""
     total_market_value = 0
     
+    logging.info(f"=== MARKET VALUE LOOKUP DEBUG for {target_date} ===")
+    logging.info(f"Portfolio contains {len(portfolio_players)} players")
+    
     for player_id in portfolio_players.keys():
-        if player_id in players_data:
-            price_history = players_data[player_id]
+        player_name = portfolio_players[player_id]['name']
+        buy_price = portfolio_players[player_id]['buy_price']
+        
+        logging.info(f"Player: {player_name} (ID: {player_id})")
+        logging.info(f"  Buy price: {buy_price}")
+        logging.info(f"  player_id type: {type(player_id)}, value: {repr(player_id)}")
+        logging.info(f"  Available player keys: {list(players_data.keys())}")
+        
+        # Convert player_id to string for lookup (price data keys are strings)
+        player_id_str = str(player_id)
+        if player_id_str in players_data:
+            price_history = players_data[player_id_str]
+            logging.info(f"  Price history entries: {len(price_history)}")
             
-            # Binary search or linear search for the right price
-            # Since it's sorted by date, we can use bisect for O(log n) lookup
-            valid_price = None
-            for price_entry in reversed(price_history):  # Start from most recent
-                if price_entry['date'] <= target_date:
-                    valid_price = price_entry['price']
-                    break
-            
-            if valid_price is not None:
-                total_market_value += valid_price
+            if price_history:
+                # Show first and last entries for context
+                logging.info(f"  First entry: {price_history[0]['date']} -> {price_history[0]['price']}")
+                logging.info(f"  Last entry: {price_history[-1]['date']} -> {price_history[-1]['price']}")
+                
+                # Check data types for comparison
+                logging.info(f"  Target date type: {type(target_date)}, value: {target_date}")
+                logging.info(f"  First price date type: {type(price_history[0]['date'])}, value: {price_history[0]['date']}")
+                
+                # Binary search or linear search for the right price
+                # Since it's sorted by date, we can use bisect for O(log n) lookup
+                valid_price = None
+                found_entry = None
+                
+                for i, price_entry in enumerate(reversed(price_history)):  # Start from most recent
+                    logging.debug(f"  Checking entry {len(price_history)-i-1}: {price_entry['date']} <= {target_date}? {price_entry['date'] <= target_date}")
+                    if price_entry['date'] <= target_date:
+                        valid_price = price_entry['price']
+                        found_entry = price_entry
+                        break
+                
+                if valid_price is not None and found_entry is not None:
+                    logging.info(f"  ✓ Found market value: {valid_price} from {found_entry['date']}")
+                    total_market_value += valid_price
+                else:
+                    logging.warning(f"  ✗ No market value found for {target_date}, using buy price: {buy_price}")
+                    logging.warning(f"  (All price history entries are after {target_date})")
+                    # Show all dates to understand the issue
+                    logging.warning(f"  All available dates: {[entry['date'] for entry in price_history[:5]]}")
+                    total_market_value += buy_price
             else:
-                # Fallback to buy price
-                total_market_value += portfolio_players[player_id]['buy_price']
+                logging.warning(f"  ✗ Empty price history, using buy price: {buy_price}")
+                total_market_value += buy_price
         else:
-            # Fallback to buy price
-            total_market_value += portfolio_players[player_id]['buy_price']
+            logging.warning(f"  ✗ Player not found in price data, using buy price: {buy_price}")
+            total_market_value += buy_price
+    
+    logging.info(f"Total market value: {total_market_value}")
+    logging.info("=== END MARKET VALUE LOOKUP DEBUG ===")
     
     return total_market_value
 

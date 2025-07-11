@@ -436,42 +436,95 @@ def plot_portfolio_timeline(investment_timeline, market_value_timeline, user_nam
     
     # Add buy/sell markers to the main chart
     if not investment_timeline.empty and all(col in investment_timeline.columns for col in ['Event_Type', 'Event_Player', 'Event_Price', 'Gesamtwert']):
-        buy_events = investment_timeline[investment_timeline['Event_Type'] == 'buy']
-        sell_events = investment_timeline[investment_timeline['Event_Type'] == 'sell']
+        # Filter events (exclude 'start' events)
+        events_only = investment_timeline[investment_timeline['Event_Type'].isin(['buy', 'sell'])]
         
-        if not buy_events.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=buy_events['Datum'],
-                    y=buy_events['Gesamtwert'],
-                    mode='markers',
-                    name='Kauf',
-                    marker=dict(color='green', size=12, symbol='triangle-up'),
-                    hovertemplate='<b>Kauf:</b> %{text}<br>' +
-                                  '<b>Preis:</b> €%{customdata:,.0f}<br>' +
-                                  '<extra></extra>',
-                    text=buy_events['Event_Player'],
-                    customdata=buy_events['Event_Price']
-                ),
-                row=1, col=1
-            )
-        
-        if not sell_events.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=sell_events['Datum'],
-                    y=sell_events['Gesamtwert'],
-                    mode='markers',
-                    name='Verkauf',
-                    marker=dict(color='red', size=12, symbol='triangle-down'),
-                    hovertemplate='<b>Verkauf:</b> %{text}<br>' +
-                                  '<b>Preis:</b> €%{customdata:,.0f}<br>' +
-                                  '<extra></extra>',
-                    text=sell_events['Event_Player'],
-                    customdata=sell_events['Event_Price']
-                ),
-                row=1, col=1
-            )
+        if not events_only.empty:
+            # Group transactions by date and event type to handle multiple transactions per day
+            buy_events = events_only[events_only['Event_Type'] == 'buy']
+            sell_events = events_only[events_only['Event_Type'] == 'sell']
+            
+            # Group buy events by date
+            if not buy_events.empty:
+                buy_grouped = buy_events.groupby('Datum').agg({
+                    'Event_Player': lambda x: list(x),
+                    'Event_Price': lambda x: list(x),
+                    'Gesamtwert': 'first'  # Take the portfolio value after all transactions on that day
+                }).reset_index()
+                
+                # Create hover text for grouped transactions
+                buy_hover_text = []
+                buy_hover_customdata = []
+                for _, row in buy_grouped.iterrows():
+                    players = row['Event_Player']
+                    prices = row['Event_Price']
+                    
+                    if len(players) == 1:
+                        # Single transaction
+                        buy_hover_text.append(players[0])
+                        buy_hover_customdata.append(prices[0])
+                    else:
+                        # Multiple transactions - create list
+                        player_price_list = [f"{player} (€{price:,.0f})" for player, price in zip(players, prices)]
+                        buy_hover_text.append('<br>'.join(player_price_list))
+                        buy_hover_customdata.append(sum(prices))  # Total spent that day
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=buy_grouped['Datum'],
+                        y=buy_grouped['Gesamtwert'],
+                        mode='markers',
+                        name='Kauf',
+                        marker=dict(color='green', size=12, symbol='triangle-up'),
+                        hovertemplate='<b>Gekauft:</b><br>%{text}<br>' +
+                                      '<b>Gesamt:</b> €%{customdata:,.0f}<br>' +
+                                      '<extra></extra>',
+                        text=buy_hover_text,
+                        customdata=buy_hover_customdata
+                    ),
+                    row=1, col=1
+                )
+            
+            # Group sell events by date
+            if not sell_events.empty:
+                sell_grouped = sell_events.groupby('Datum').agg({
+                    'Event_Player': lambda x: list(x),
+                    'Event_Price': lambda x: list(x),
+                    'Gesamtwert': 'first'  # Take the portfolio value after all transactions on that day
+                }).reset_index()
+                
+                # Create hover text for grouped transactions
+                sell_hover_text = []
+                sell_hover_customdata = []
+                for _, row in sell_grouped.iterrows():
+                    players = row['Event_Player']
+                    prices = row['Event_Price']
+                    
+                    if len(players) == 1:
+                        # Single transaction
+                        sell_hover_text.append(players[0])
+                        sell_hover_customdata.append(prices[0])
+                    else:
+                        # Multiple transactions - create list
+                        player_price_list = [f"{player} (€{price:,.0f})" for player, price in zip(players, prices)]
+                        sell_hover_text.append('<br>'.join(player_price_list))
+                        sell_hover_customdata.append(sum(prices))  # Total earned that day
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=sell_grouped['Datum'],
+                        y=sell_grouped['Gesamtwert'],
+                        mode='markers',
+                        name='Verkauf',
+                        marker=dict(color='red', size=12, symbol='triangle-down'),
+                        hovertemplate='<b>Verkauft:</b><br>%{text}<br>' +
+                                      '<b>Gesamt:</b> €%{customdata:,.0f}<br>' +
+                                      '<extra></extra>',
+                        text=sell_hover_text,
+                        customdata=sell_hover_customdata
+                    ),
+                    row=1, col=1
+                )
     
     # Update layout
     fig.update_layout(

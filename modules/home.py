@@ -234,10 +234,13 @@ def get_current_team(db, user_name, spielzeit):
         buy_price = player['Kaufpreis']
         difference = current_value - buy_price
         
+        # Format the purchase date to German format (dd.mm.yyyy)
+        kaufdatum_formatted = player['Kaufdatum'].strftime('%d.%m.%Y') if pd.notna(player['Kaufdatum']) else ''
+        
         team_data.append({
             'ID': player_id,
             'Spieler': player['Spieler'],
-            'Kaufdatum': player['Kaufdatum'],
+            'Kaufdatum': kaufdatum_formatted,
             'Kaufpreis': buy_price,
             'Aktueller_Marktwert': current_value,
             'Differenz': difference,
@@ -335,7 +338,7 @@ def display_team_grid(db, team_df, spielzeit):
         }
     )
     
-    gb.configure_column("Kaufdatum", type=["dateColumnFilter", "customDateTimeFormat"])
+    gb.configure_column("Kaufdatum", type=["textColumn"])
     gb.configure_selection("single")
     
     grid_options = gb.build()

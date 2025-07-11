@@ -3,9 +3,9 @@ import pandas as pd
 from database import get_db
 import summary_stats as statistics
 import data_loader
-from pages import home, players, members
-from pages import transfers as transfers_page
-from pages import teams as teams_page
+from modules import home, players, members
+from modules import transfers as transfers_page
+from modules import teams as teams_page
 
 # Initialize database connection
 db = get_db()
@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="Comunio App",
     page_icon=":money_with_wings:",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # Sidebar navigation
