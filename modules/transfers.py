@@ -63,19 +63,23 @@ def show(db, transfers, spielzeit):
     else:
         transfers_to_display = transfers_to_display
     
-    # Format dates to German format (dd.mm.yyyy) - only if not grouped
-    if group_by_column == "Kein":
-        # Format Kaufdatum
-        transfers_to_display = transfers_to_display.copy()
-        transfers_to_display['Kaufdatum'] = transfers_to_display['Kaufdatum'].apply(
-            lambda x: x.strftime('%d.%m.%Y') if pd.notna(x) else ''
-        )
-        # Format Verkaufsdatum  
-        transfers_to_display['Verkaufsdatum'] = transfers_to_display['Verkaufsdatum'].apply(
-            lambda x: x.strftime('%d.%m.%Y') if pd.notna(x) else ''
-        )
-
     gb = GridOptionsBuilder.from_dataframe(transfers_to_display)
+    
+    # Configure date columns only if they exist (not grouped data)
+    if 'Kaufdatum' in transfers_to_display.columns:
+        gb.configure_column(
+            "Kaufdatum", 
+            type=["dateColumnFilter"],
+            valueFormatter="value ? new Date(value).toLocaleDateString('de-DE') : ''",
+        )
+    
+    if 'Verkaufsdatum' in transfers_to_display.columns:
+        gb.configure_column(
+            "Verkaufsdatum", 
+            type=["dateColumnFilter"],
+            valueFormatter="value ? new Date(value).toLocaleDateString('de-DE') : ''",
+        )
+    
     gb.configure_column(
         "Kaufpreis",
         type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
@@ -99,10 +103,6 @@ def show(db, transfers, spielzeit):
         type=["numericColumn", "numberColumnFilter", "customNumericFormat"],
         valueFormatter="data['Gewinn/Verlust pro Tag'].toLocaleString('de-DE') + ' €';",
     )
-    
-    # Configure date columns as text columns for German formatting
-    gb.configure_column("Kaufdatum", type=["textColumn"])
-    gb.configure_column("Verkaufsdatum", type=["textColumn"])
     
     gb.configure_selection("single")
     grid_options = gb.build()
