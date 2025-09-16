@@ -158,11 +158,14 @@ def get_player_market_values_df(db: MongoClient):
 def get_player_points_df(db: MongoClient):
     players = db["Players"]
 
+    # Use proper date for filtering - season start for 2024/2025
+    season_start = "2024-07-01T00:00:00+00:00"
+
     # Measure time to define the aggregation pipeline
     start_time = time.time()
     pipeline = [
         {"$unwind": "$point_history"},
-        {"$match": {"point_history.matchday.timestamp": {"$gt": "2024-07-12"}}},
+        {"$match": {"point_history.matchday.timestamp": {"$gte": season_start}}},
         {
             "$project": {
                 "Datum": "$point_history.matchday.timestamp",
@@ -338,6 +341,9 @@ def get_player_points_with_market_value_df(db: MongoClient):
     """Get player points data combined with current market value"""
     players = db["Players"]
 
+    # Use proper date for filtering - season start for 2024/2025
+    season_start = "2025-07-01T00:00:00+00:00"
+
     # Optimized pipeline that combines both operations without memory-intensive sorting
     pipeline = [
         {
@@ -351,7 +357,7 @@ def get_player_points_with_market_value_df(db: MongoClient):
             }
         },
         {"$unwind": "$point_history"},
-        {"$match": {"point_history.matchday.timestamp": {"$gt": "2024-07-12"}}},
+        {"$match": {"point_history.matchday.timestamp": {"$gte": season_start}}},
         {
             "$group": {
                 "_id": "$id",
@@ -359,7 +365,13 @@ def get_player_points_with_market_value_df(db: MongoClient):
                 "ID": {"$first": "$id"},
                 "Preis": {"$first": "$price"},
                 "Aktueller_Marktwert": {"$first": "$latest_market_value"},
-                "total_points": {"$sum": "$point_history.points"},
+                "total_points": {
+                    "$sum": {
+                        "$toInt": {
+                            "$ifNull": ["$point_history.points", 0]
+                        }
+                    }
+                },
                 "games_count": {"$sum": 1}
             }
         },
