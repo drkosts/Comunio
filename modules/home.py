@@ -67,6 +67,13 @@ def display_portfolio_timeline(db, user_name, spielzeit):
     with st.spinner("Lade Portfolio Timeline..."):
         start_time = time.time()
         investment_timeline = crud.get_or_calculate_portfolio_timeline(db, user_name, spielzeit)
+        
+        # Debug: Show what dates we have in the timeline
+        if not investment_timeline.empty:
+            min_date = investment_timeline['Datum'].min()
+            max_date = investment_timeline['Datum'].max()
+            st.info(f"📊 Timeline Daten: {len(investment_timeline)} Einträge von {min_date} bis {max_date}")
+        
         market_value_timeline = crud.get_or_calculate_market_value_timeline(db, user_name, spielzeit)
         end_time = time.time()
         

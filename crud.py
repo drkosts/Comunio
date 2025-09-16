@@ -608,12 +608,13 @@ def get_portfolio_current_value_timeline(db: MongoClient, user_name: str, spielz
 
 
 def get_or_calculate_portfolio_timeline(db: MongoClient, user_name: str, spielzeit: str = "2024/2025") -> pd.DataFrame:
-    """Get portfolio timeline from cache or calculate incrementally and update cache"""
+    """Get portfolio timeline from cache and calculate missing dates"""
     
     try:
         cache_collection = db["PortfolioCache"]
         cache_key = f"{user_name}_{spielzeit}"
         date_from, date_to = get_date_range(spielzeit)
+        today = pd.to_datetime('today').date()
         
         # Try to get from cache first
         cached_result = cache_collection.find_one({"cache_key": cache_key})
@@ -631,55 +632,48 @@ def get_or_calculate_portfolio_timeline(db: MongoClient, user_name: str, spielze
                 
                 print(f"Found cache for {user_name} up to {last_cached_date}")
                 
-                # Check if we need to calculate additional data
-                # Get all transfers to see if there are any new ones since last cache
-                transfers_collection = db["Transfers"]
+                # Determine what needs to be calculated
+                needs_calculation = False
+                calculation_start_date = None
                 
-                # Find transfers that happened after the last cached date
-                new_transfers = list(transfers_collection.find({
-                    "member_name": user_name,
-                    "buy.date": {"$gte": date_from, "$lte": date_to},
-                    "$or": [
-                        {"buy.date": {"$gt": last_cached_date.strftime("%Y-%m-%d")}},
-                        {"sell.date": {"$gt": last_cached_date.strftime("%Y-%m-%d")}}
-                    ]
-                }, {"_id": 0}))
+                # Check if we need to calculate missing dates
+                if last_cached_date < today:
+                    needs_calculation = True
+                    calculation_start_date = last_cached_date
+                    print(f"Need to calculate from {last_cached_date} to {today}")
                 
-                # If no new transfers and cache is recent (within last day), return cached data
-                cache_date = pd.to_datetime(cached_result.get("calculated_at"))
-                cache_age_hours = (pd.Timestamp.now() - cache_date).total_seconds() / 3600
+                # Always recalculate today to get latest market values and any new transfers
+                elif last_cached_date == today:
+                    needs_calculation = True
+                    calculation_start_date = last_cached_date
+                    print(f"Recalculating today ({today}) for latest market values")
                 
-                if not new_transfers and cache_age_hours < 24:
-                    print(f"Using cached data (no new transfers, cache age: {cache_age_hours:.1f} hours)")
-                    return cached_df
-                
-                # If there are new transfers or cache is old, calculate incrementally
-                if new_transfers or cache_age_hours >= 24:
-                    print(f"Calculating incrementally: {len(new_transfers)} new transfers, cache age: {cache_age_hours:.1f} hours")
-                    
-                    # Get the final portfolio state from cache
-                    last_entry = cached_df.iloc[-1]
-                    
-                    # Calculate new timeline from last cached state
-                    incremental_df = calculate_portfolio_timeline_incremental(
-                        db, user_name, spielzeit, last_entry, last_cached_date, new_transfers
+                if needs_calculation:
+                    # Calculate the missing portion
+                    missing_df = calculate_portfolio_timeline_from_date(
+                        db, user_name, spielzeit, calculation_start_date
                     )
                     
-                    if not incremental_df.empty:
-                        # Combine cached data with new data (remove any overlap)
-                        combined_df = pd.concat([
-                            cached_df[cached_df['Datum'] <= last_cached_date],
-                            incremental_df[incremental_df['Datum'] > last_cached_date]
-                        ], ignore_index=True)
+                    if not missing_df.empty:
+                        # Combine cached data (excluding overlap) with new data
+                        if calculation_start_date == last_cached_date:
+                            # Remove the last cached date if we're recalculating it
+                            cached_df = cached_df[cached_df['Datum'] < last_cached_date]
+                        
+                        combined_df = pd.concat([cached_df, missing_df], ignore_index=True)
+                        combined_df = combined_df.sort_values('Datum').reset_index(drop=True)
                         
                         # Update cache with combined data
                         update_portfolio_cache(db, cache_key, user_name, spielzeit, combined_df)
+                        
+                        print(f"Updated cache with {len(missing_df)} new entries")
                         return combined_df
                     else:
-                        # If no new data, just update cache timestamp and return cached data
-                        print("No new data to add, updating cache timestamp")
-                        update_portfolio_cache(db, cache_key, user_name, spielzeit, cached_df)
+                        print("No new data calculated, returning cached data")
                         return cached_df
+                else:
+                    print("Cache is up to date")
+                    return cached_df
         
         # Calculate from scratch if no cache exists
         print(f"No cache found for {user_name}, calculating from scratch")
@@ -722,61 +716,71 @@ def update_portfolio_cache(db: MongoClient, cache_key: str, user_name: str, spie
     )
 
 
-def calculate_portfolio_timeline_incremental(db: MongoClient, user_name: str, spielzeit: str, 
-                                           last_entry: pd.Series, from_date, 
-                                           new_transfers: list) -> pd.DataFrame:
-    """Calculate portfolio timeline incrementally from a given state"""
-    
-    if not new_transfers:
-        return pd.DataFrame()
+def calculate_portfolio_timeline_from_date(db: MongoClient, user_name: str, spielzeit: str, from_date) -> pd.DataFrame:
+    """Calculate portfolio timeline starting from a specific date to today"""
     
     date_from, date_to = get_date_range(spielzeit)
+    today = pd.to_datetime('today').date()
     
-    # Convert from_date to string for database query if it's a date object
+    # Convert from_date to proper format
     if hasattr(from_date, 'strftime'):
-        from_date_str = from_date.strftime("%Y-%m-%d")
         from_date_obj = from_date
     else:
-        from_date_str = str(from_date)
         from_date_obj = pd.to_datetime(from_date).date()
     
-    # Initialize state from last cache entry
-    portfolio_players = {}
-    available_cash = last_entry['Verfuegbares_Cash']
+    print(f"Calculating portfolio timeline from {from_date_obj} to {today}")
     
-    # Reconstruct portfolio state from all transfers up to from_date
-    # We need to rebuild the portfolio state since we only have aggregated values in cache
+    # Get all transfers for this user in the season
     transfers_collection = db["Transfers"]
     all_transfers = list(transfers_collection.find({
         "member_name": user_name,
-        "buy.date": {"$gte": date_from, "$lte": from_date_str}
+        "buy.date": {"$gte": date_from, "$lte": date_to}
     }, {"_id": 0}))
     
-    # Rebuild portfolio state up to from_date
+    if not all_transfers:
+        return pd.DataFrame()
+    
+    # Build complete event timeline up to today
+    all_events = []
     for transfer in all_transfers:
         # Buy event
         buy_date = pd.to_datetime(transfer['buy']['date']).date()
-        if buy_date <= from_date_obj:
-            portfolio_players[transfer['player_id']] = {
-                'name': transfer['player_name'],
-                'buy_price': transfer['buy']['price'],
-                'buy_date': transfer['buy']['date']
-            }
-            
-            # Sell event (if exists and within timeframe)
-            if transfer.get('sell'):
-                sell_date = pd.to_datetime(transfer['sell']['date']).date()
-                if sell_date <= from_date_obj and transfer['player_id'] in portfolio_players:
-                    del portfolio_players[transfer['player_id']]
+        all_events.append({
+            'date': buy_date,
+            'date_str': transfer['buy']['date'],
+            'type': 'buy',
+            'player_id': transfer['player_id'],
+            'player_name': transfer['player_name'],
+            'price': transfer['buy']['price']
+        })
+        
+        # Sell event if exists
+        if transfer.get('sell'):
+            sell_date = pd.to_datetime(transfer['sell']['date']).date()
+            all_events.append({
+                'date': sell_date,
+                'date_str': transfer['sell']['date'],
+                'type': 'sell',
+                'player_id': transfer['player_id'],
+                'player_name': transfer['player_name'],
+                'price': transfer['sell']['price']
+            })
+    
+    # Sort all events by date
+    all_events.sort(key=lambda x: x['date'])
+    
+    # Filter events to only those from from_date onwards
+    relevant_events = [event for event in all_events if event['date'] >= from_date_obj]
+    
+    if not relevant_events:
+        return pd.DataFrame()
     
     # Get all unique player IDs for price lookup
     all_player_ids = set()
-    for transfer in new_transfers:
+    for transfer in all_transfers:
         all_player_ids.add(transfer['player_id'])
-    # Also add current portfolio players for market value calculation
-    all_player_ids.update(portfolio_players.keys())
     
-    # Bulk fetch price history for relevant players
+    # Bulk fetch price history for all players
     players_collection = db["Players"]
     players_data = {}
     
@@ -803,73 +807,95 @@ def calculate_portfolio_timeline_incremental(db: MongoClient, user_name: str, sp
         price_history.sort(key=lambda x: x['date'])
         players_data[player_id] = price_history
     
-    # Create events from new transfers
-    new_events = []
-    for transfer in new_transfers:
-        # Only add events that are after from_date
-        buy_date = pd.to_datetime(transfer['buy']['date']).date()
-        if buy_date > from_date_obj:
-            new_events.append({
-                'date': transfer['buy']['date'],
-                'type': 'buy',
-                'player_id': transfer['player_id'],
-                'player_name': transfer['player_name'],
-                'price': transfer['buy']['price']
-            })
-        
-        if transfer.get('sell'):
-            sell_date = pd.to_datetime(transfer['sell']['date']).date()
-            if sell_date > from_date_obj:
-                new_events.append({
-                    'date': transfer['sell']['date'],
-                    'type': 'sell',
-                    'player_id': transfer['player_id'],
-                    'player_name': transfer['player_name'],
-                    'price': transfer['sell']['price']
-                })
+    # Rebuild portfolio state up to from_date
+    portfolio_players = {}
+    available_cash = 40_000_000  # Starting budget
     
-    # Sort events by date
-    new_events.sort(key=lambda x: x['date'])
+    # Process all events up to (but not including) from_date to rebuild state
+    for event in all_events:
+        if event['date'] < from_date_obj:
+            if event['type'] == 'buy':
+                available_cash -= event['price']
+                portfolio_players[event['player_id']] = {
+                    'name': event['player_name'],
+                    'buy_price': event['price'],
+                    'buy_date': event['date_str']
+                }
+            elif event['type'] == 'sell':
+                if event['player_id'] in portfolio_players:
+                    available_cash += event['price']
+                    del portfolio_players[event['player_id']]
     
-    # Process new events
+    # Now create daily timeline from from_date onwards
     timeline_data = []
+    end_date = min(today, pd.to_datetime(date_to).date())
     
-    for event in new_events:
+    # Create a dictionary of events by date for easy lookup
+    events_by_date = {}
+    for event in relevant_events:
         event_date = event['date']
-        if isinstance(event_date, str):
-            event_date_obj = pd.to_datetime(event_date).date()
-        else:
-            event_date_obj = pd.to_datetime(event_date).date()
+        if event_date not in events_by_date:
+            events_by_date[event_date] = []
+        events_by_date[event_date].append(event)
+    
+    # Process each day from from_date to today
+    current_date = from_date_obj
+    while current_date <= end_date:
+        # Process any events that happened on this date
+        last_event_type = None
+        last_event_player = None
+        last_event_price = 0
         
-        # Update portfolio
-        if event['type'] == 'buy':
-            available_cash -= event['price']
-            portfolio_players[event['player_id']] = {
-                'name': event['player_name'],
-                'buy_price': event['price'],
-                'buy_date': event_date
-            }
-        elif event['type'] == 'sell':
-            if event['player_id'] in portfolio_players:
-                available_cash += event['price']
-                del portfolio_players[event['player_id']]
+        if current_date in events_by_date:
+            for event in events_by_date[current_date]:
+                # Update portfolio based on event
+                if event['type'] == 'buy':
+                    available_cash -= event['price']
+                    portfolio_players[event['player_id']] = {
+                        'name': event['player_name'],
+                        'buy_price': event['price'],
+                        'buy_date': event['date_str']
+                    }
+                    last_event_type = 'buy'
+                    last_event_player = event['player_name']
+                    last_event_price = event['price']
+                elif event['type'] == 'sell':
+                    if event['player_id'] in portfolio_players:
+                        available_cash += event['price']
+                        del portfolio_players[event['player_id']]
+                        last_event_type = 'sell'
+                        last_event_player = event['player_name']
+                        last_event_price = event['price']
         
-        # Calculate current values
+        # Calculate daily portfolio values (regardless of whether there were events)
         total_investment = sum(player['buy_price'] for player in portfolio_players.values())
-        current_market_value = get_portfolio_market_value_fast(players_data, portfolio_players, event_date_obj)
+        current_market_value = get_portfolio_market_value_fast(players_data, portfolio_players, current_date)
         total_value = available_cash + current_market_value
         
+        # Determine event type for this day
+        if last_event_type:
+            event_type = last_event_type
+            event_player = last_event_player
+            event_price = last_event_price
+        else:
+            event_type = 'daily_update'
+            event_player = 'Market Update'
+            event_price = 0
+        
         timeline_data.append({
-            'Datum': event_date_obj,
+            'Datum': current_date,
             'Portfolio_Wert_Kaufpreis': total_investment,
             'Portfolio_Wert_Aktuell': current_market_value,
             'Verfuegbares_Cash': available_cash,
             'Gesamtwert': total_value,
             'Anzahl_Spieler': len(portfolio_players),
-            'Event_Type': event['type'],
-            'Event_Player': event['player_name'],
-            'Event_Price': event['price']
+            'Event_Type': event_type,
+            'Event_Player': event_player,
+            'Event_Price': event_price
         })
+        
+        # Move to next day
+        current_date += pd.Timedelta(days=1).to_pytimedelta()
     
     return pd.DataFrame(timeline_data)
 
@@ -987,7 +1013,12 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
         'Event_Price': 0
     })
     
-    # Process events
+    # Generate daily timeline from season start to today
+    start_date = pd.to_datetime(date_from).date()
+    end_date = min(pd.to_datetime('today').date(), pd.to_datetime(date_to).date())
+    
+    # Create a dictionary of events by date for easy lookup
+    events_by_date = {}
     for event in all_events:
         event_date = event['date']
         if isinstance(event_date, str):
@@ -995,35 +1026,72 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
         else:
             event_date_obj = pd.to_datetime(event_date).date()
         
-        # Update portfolio
-        if event['type'] == 'buy':
-            available_cash -= event['price']
-            portfolio_players[event['player_id']] = {
-                'name': event['player_name'],
-                'buy_price': event['price'],
-                'buy_date': event_date
-            }
-        elif event['type'] == 'sell':
-            if event['player_id'] in portfolio_players:
-                available_cash += event['price']
-                del portfolio_players[event['player_id']]
+        if event_date_obj not in events_by_date:
+            events_by_date[event_date_obj] = []
+        events_by_date[event_date_obj].append(event)
+    
+    # Process each day from start to end
+    current_date = start_date
+    while current_date <= end_date:
+        # Process any events that happened on this date
+        last_event_type = None
+        last_event_player = None
+        last_event_price = 0
         
-        # Calculate current values
+        if current_date in events_by_date:
+            for event in events_by_date[current_date]:
+                # Update portfolio based on event
+                if event['type'] == 'buy':
+                    available_cash -= event['price']
+                    portfolio_players[event['player_id']] = {
+                        'name': event['player_name'],
+                        'buy_price': event['price'],
+                        'buy_date': event['date']
+                    }
+                    last_event_type = 'buy'
+                    last_event_player = event['player_name']
+                    last_event_price = event['price']
+                elif event['type'] == 'sell':
+                    if event['player_id'] in portfolio_players:
+                        available_cash += event['price']
+                        del portfolio_players[event['player_id']]
+                        last_event_type = 'sell'
+                        last_event_player = event['player_name']
+                        last_event_price = event['price']
+        
+        # Calculate daily portfolio values (regardless of whether there were events)
         total_investment = sum(player['buy_price'] for player in portfolio_players.values())
-        current_market_value = get_portfolio_market_value_fast(players_data, portfolio_players, event_date_obj)
+        current_market_value = get_portfolio_market_value_fast(players_data, portfolio_players, current_date)
         total_value = available_cash + current_market_value
         
+        # Determine event type for this day
+        if current_date == start_date:
+            event_type = 'start'
+            event_player = 'Season Start'
+            event_price = 0
+        elif last_event_type:
+            event_type = last_event_type
+            event_player = last_event_player
+            event_price = last_event_price
+        else:
+            event_type = 'daily_update'
+            event_player = 'Market Update'
+            event_price = 0
+        
         timeline_data.append({
-            'Datum': event_date_obj,
+            'Datum': current_date,
             'Portfolio_Wert_Kaufpreis': total_investment,
             'Portfolio_Wert_Aktuell': current_market_value,
             'Verfuegbares_Cash': available_cash,
             'Gesamtwert': total_value,
             'Anzahl_Spieler': len(portfolio_players),
-            'Event_Type': event['type'],
-            'Event_Player': event['player_name'],
-            'Event_Price': event['price']
+            'Event_Type': event_type,
+            'Event_Player': event_player,
+            'Event_Price': event_price
         })
+        
+        # Move to next day
+        current_date += pd.Timedelta(days=1).to_pytimedelta()
     
     return pd.DataFrame(timeline_data)
 
