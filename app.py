@@ -27,20 +27,16 @@ page = st.sidebar.radio(
 
 # Main title and season selector
 st.title("Comunio App")
-spielzeit = st.selectbox("Spielzeit", ["2025/2026","2024/2025", "2023/2024"], index=0)
+spielzeit = st.selectbox("Spielzeit", ["2025/2026", "2024/2025", "2023/2024"], index=0)
 
-# Get current date for caching
+# Get current date for caching (hourly granularity)
 date = pd.to_datetime("today").hour
 
-# Load data
+# Load data — all via @st.cache_data, keyed by (spielzeit, date)
+# No session_state needed: cache_data handles deduplication per season
 transfers_data = data_loader.load_transfers(db, spielzeit, date)
-
-# Load player data in the background
-if "players_points" not in st.session_state:
-    st.session_state.players_points = data_loader.load_player_points(db, spielzeit, date)
-
-if "player_data_combined" not in st.session_state:
-    st.session_state.player_data_combined = data_loader.load_player_data_combined(db, spielzeit, date)
+players_points = data_loader.load_player_points(db, spielzeit, date)
+player_data_combined = data_loader.load_player_data_combined(db, spielzeit, date)
 
 # Route to appropriate page
 if page == "Statistics":
@@ -48,7 +44,7 @@ if page == "Statistics":
 elif page == "Home":
     home.show(db, transfers_data, spielzeit)
 elif page == "Players":
-    players.show(st.session_state.player_data_combined)
+    players.show(player_data_combined)
 elif page == "Members":
     members.show(transfers_data)
 elif page == "Transfers":
