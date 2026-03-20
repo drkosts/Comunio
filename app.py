@@ -37,10 +37,10 @@ transfers_data = data_loader.load_transfers(db, spielzeit, date)
 
 # Load player data in the background
 if "players_points" not in st.session_state:
-    st.session_state.players_points = data_loader.load_player_points(db, date)
+    st.session_state.players_points = data_loader.load_player_points(db, spielzeit, date)
 
 if "player_data_combined" not in st.session_state:
-    st.session_state.player_data_combined = data_loader.load_player_data_combined(db, date)
+    st.session_state.player_data_combined = data_loader.load_player_data_combined(db, spielzeit, date)
 
 # Route to appropriate page
 if page == "Statistics":
