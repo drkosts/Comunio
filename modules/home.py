@@ -11,6 +11,11 @@ def show(db, transfers, spielzeit):
     
     st.header("Mein aktuelles Team")
     
+    # Guard against empty or malformed transfers data
+    if transfers.empty or 'Mitspieler' not in transfers.columns:
+        st.warning("Keine Transferdaten für die ausgewählte Saison gefunden.")
+        return
+
     # User selection
     col1, col2 = st.columns([3, 7])
     with col1:
