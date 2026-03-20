@@ -6,6 +6,7 @@ import data_loader
 from modules import home, players, members
 from modules import transfers as transfers_page
 from modules import teams as teams_page
+from modules import head_to_head
 
 # Initialize database connection
 db = get_db()
@@ -22,7 +23,7 @@ st.set_page_config(
 st.sidebar.title("Comunio App")
 page = st.sidebar.radio(
     "Navigation",
-    ["Home", "Transfers", "Players", "Members", "Teams", "Statistics"],
+    ["Home", "Transfers", "Players", "Members", "Teams", "Statistics", "Head-to-Head"],
 )
 
 # Main title and season selector
@@ -51,3 +52,5 @@ elif page == "Transfers":
     transfers_page.show(db, transfers_data, spielzeit)
 elif page == "Teams":
     teams_page.show()
+elif page == "Head-to-Head":
+    head_to_head.show(transfers_data, spielzeit)
