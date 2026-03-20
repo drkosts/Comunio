@@ -19,21 +19,21 @@ def load_transfers(_db, spielzeit, date) -> pd.DataFrame:
     return transfers
 
 
-@st.cache_resource
-def load_player_points(_db, date):
-    """Load player points data"""
+@st.cache_data
+def load_player_points(_db, spielzeit, date):
+    """Load player points data for the specified season"""
     start_time = time.time()
-    player_points = crud.get_player_points_df(_db)
+    player_points = crud.get_player_points_df(_db, spielzeit)
     end_time = time.time()
     print(f"Loaded player points in {end_time - start_time:.2f} seconds")
     return player_points
 
 
-@st.cache_resource
-def load_player_data_combined(_db, date):
+@st.cache_data
+def load_player_data_combined(_db, spielzeit, date):
     """Load both player points and current market values in one query"""
     start_time = time.time()
-    player_data = crud.get_player_points_with_market_value_df(_db)
+    player_data = crud.get_player_points_with_market_value_df(_db, spielzeit)
     end_time = time.time()
     print(f"Loaded combined player data in {end_time - start_time:.2f} seconds")
     return player_data

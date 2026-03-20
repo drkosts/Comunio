@@ -209,30 +209,25 @@ def display_timeline_stats(investment_timeline, market_value_timeline):
 
 
 def get_current_team(db, user_name, spielzeit):
-    """Get current team for a specific user in a specific season"""
-    
+    """Get current team for a specific user in a specific season.
+
+    Uses a single bulk MongoDB aggregation to fetch all market values instead
+    of one query per player (fixes N+1 query problem).
+    """
     # Get all transfers for the user in this season
     all_transfers = crud.get_transfers(db, spielzeit)
     user_transfers = all_transfers[all_transfers['Mitspieler'] == user_name]
-    
+
     # Get players that were bought but not sold (current team)
     current_players = user_transfers[user_transfers['Verkaufsdatum'].isna()]
-    
+
     if current_players.empty:
         return pd.DataFrame()
-    
-    # Get current market values for these players
+
+    # Fetch all market values in a single bulk query (fixes N+1)
     player_ids = current_players['ID'].astype(str).tolist()
-    current_market_values = {}
-    
-    for player_id in player_ids:
-        market_value_df = crud.get_player_market_value(db, player_id)
-        if market_value_df is not None and not market_value_df.empty:
-            # Get the most recent market value
-            current_market_values[int(player_id)] = market_value_df['Marktwert'].iloc[-1]
-        else:
-            current_market_values[int(player_id)] = 0
-    
+    current_market_values = crud.get_current_market_values_bulk(db, player_ids)
+
     # Prepare team data
     team_data = []
     for _, player in current_players.iterrows():
@@ -240,20 +235,18 @@ def get_current_team(db, user_name, spielzeit):
         current_value = current_market_values.get(player_id, 0)
         buy_price = player['Kaufpreis']
         difference = current_value - buy_price
-        
-        # Keep the purchase date as datetime for proper sorting
-        
+
         team_data.append({
             'ID': player_id,
             'Spieler': player['Spieler'],
-            'Kaufdatum': player['Kaufdatum'],  # Keep as datetime
+            'Kaufdatum': player['Kaufdatum'],
             'Kaufpreis': buy_price,
             'Aktueller_Marktwert': current_value,
             'Differenz': difference,
             'Differenz_Prozent': round((difference / buy_price * 100), 1) if buy_price > 0 else 0,
             'Von': player['Von']
         })
-    
+
     return pd.DataFrame(team_data)
 
 
