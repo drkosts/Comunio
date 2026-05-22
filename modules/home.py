@@ -223,11 +223,23 @@ def get_current_team(db, user_name, spielzeit):
     all_transfers = crud.get_transfers(db, spielzeit)
     user_transfers = all_transfers[all_transfers['Mitspieler'] == user_name]
 
-    # Get players that were bought but not sold (current team)
-    current_players = user_transfers[user_transfers['Verkaufsdatum'].isna()]
-
-    if current_players.empty:
+    if user_transfers.empty:
         return pd.DataFrame()
+
+    # Correct logic: player is in team if they have any unsold buys
+    # (Verkaufsdatum is NULL means that particular buy hasn't been sold yet)
+    player_stats = user_transfers.groupby('ID').agg(
+        active_buys=('Verkaufsdatum', lambda x: x.isna().sum()),  # Count unsold buys
+        sells=('Verkaufsdatum', lambda x: x.notna().sum())  # Count sold buys
+    ).reset_index()
+    player_stats['im_kader'] = player_stats['active_buys'] > 0
+    current_team_ids = player_stats[player_stats['im_kader']]['ID'].tolist()
+
+    if not current_team_ids:
+        return pd.DataFrame()
+
+    # Get current players (drop_duplicates keeps first occurrence, so sort by Kaufdatum desc first)
+    current_players = user_transfers[user_transfers['ID'].isin(current_team_ids)].sort_values('Kaufdatum', ascending=False).drop_duplicates(subset='ID')
 
     # Fetch all market values in a single bulk query (fixes N+1)
     player_ids = current_players['ID'].astype(str).tolist()
@@ -275,7 +287,6 @@ def display_team_stats(team_df):
         st.metric("Aktueller Wert", f"{current_value:,.0f} €")
     
     with col4:
-        delta_color = "normal" if total_difference >= 0 else "inverse"
         st.metric("Gewinn/Verlust", f"{total_difference:,.0f} €", delta=f"{percentage_change:+.1f}%")
     
     with col5:

@@ -43,7 +43,25 @@ def get_current_market_values_bulk(db: MongoClient, player_ids: list) -> dict:
             "$project": {
                 "_id": 0,
                 "id": 1,
-                "latest_price": {"$last": "$price_history.quotedPrice"},
+                # Sort price_history by timestamp descending, then take first (most recent)
+                "latest_price": {
+                    "$arrayElemAt": [
+                        {
+                            "$sortArray": {
+                                "input": "$price_history",
+                                "sortBy": {"timestamp": -1}
+                            }
+                        },
+                        0
+                    ]
+                },
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "id": 1,
+                "latest_price": "$latest_price.quotedPrice",
             }
         },
     ]
