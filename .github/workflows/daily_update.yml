@@ -1,0 +1,47 @@
+name: Daily Comunio data update
+
+# Täglich um 10:00 UTC (= 12:00 MESZ, 11:00 MEZ). Zeitzonen-konvertiert
+# wird nicht — GitHub-Actions-Cron läuft auf UTC. Falls du strikt 10:00
+# lokale Zeit brauchst, ändere den Cron auf '0 8 * * *' (UTC) für 10:00
+# MESZ im Winter oder behalte 10 UTC (= 12 MESZ im Sommer).
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+    # Manueller Trigger über GitHub UI: Actions → Daily Comunio data
+    # update → Run workflow. Praktisch zum Testen ohne auf den Timer
+    # zu warten.
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          cd comunio_datenverarbeitung
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run daily update
+        working-directory: comunio_datenverarbeitung
+        env:
+          # Diese Secrets legst du in
+          # GitHub → Repo → Settings → Secrets and variables → Actions
+          # an. NICHT ins Repo committen.
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          COMUNIO_USERNAME: ${{ secrets.COMUNIO_USERNAME }}
+          COMUNIO_PASSWORD: ${{ secrets.COMUNIO_PASSWORD }}
+        run: |
+          python cron_update.py --continue-on-error

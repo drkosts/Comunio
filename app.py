@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import crud
 from database import get_db
 import summary_stats as statistics
 import data_loader
