@@ -14,8 +14,12 @@ logging.basicConfig(
     ]
 )
 
-# Season date ranges configuration
+# Season date ranges configuration.
+# Spiegelung von crud/base.py — hier dupliziert, weil portfolio ein
+# eigenständiges Modul ist und nicht aus base importiert. Neue Saisons
+# müssen in BEIDEN Dateien ergänzt werden, bis das Duplikat aufgelöst ist.
 SEASON_DATE_RANGES: Dict[str, Tuple[str, str]] = {
+    "2026/2027": ("2026-07-22", "2027-06-30"),
     "2024/2025": ("2024-07-01", "2025-06-30"),
     "2023/2024": ("2023-06-01", "2024-06-30"),
     "2025/2026": ("2025-07-01", "2026-06-30"),

@@ -28,7 +28,10 @@ page = st.sidebar.radio(
 
 # Main title and season selector
 st.title("Comunio App")
-spielzeit = st.selectbox("Spielzeit", ["2025/2026", "2024/2025", "2023/2024"], index=0)
+# Dropdown wird datengetrieben aus crud.base.SEASON_DATE_RANGES befüllt —
+# damit neue Saisons automatisch in der UI auftauchen, sobald sie dort
+# ergänzt werden.
+spielzeit = st.selectbox("Spielzeit", list(crud.SEASON_DATE_RANGES.keys()), index=0)
 
 # Manual cache bypass button
 if "cache_bypass" not in st.session_state:
