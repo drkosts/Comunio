@@ -180,7 +180,15 @@ def get_player_points_df(db: MongoClient, spielzeit: str = "2024/2025"):
     print(f"Time to convert result to DataFrame: {end_time - start_time:.2f} seconds")
 
     start_time = time.time()
-    df = df[df["Datum"] > filter_date]
+    # Guard: bei leerem Ergebnis (Saison hat noch keine Spieltage, oder
+    # Daten sind noch nicht eingelaufen) hat der DataFrame keine Spalten
+    # → df["Datum"] würde KeyError werfen. Lieber leeres DF mit den
+    # erwarteten Spalten zurückgeben, damit downstream-Code (groupby,
+    # plot) nicht crasht.
+    if df.empty:
+        df = pd.DataFrame(columns=["Datum", "Punkte", "Spieler", "ID", "Preis"])
+    else:
+        df = df[df["Datum"] > filter_date]
     end_time = time.time()
     print(f"Time to filter entries: {end_time - start_time:.2f} seconds")
 
@@ -343,7 +351,22 @@ def get_player_points_with_market_value_df(db: MongoClient, spielzeit: str = "20
     result = list(players.aggregate(pipeline))
     df = pd.DataFrame(result)
 
-    if not df.empty:
+    # Bei leerem Ergebnis (z.B. Saison noch nicht begonnen) hat der
+    # DataFrame keine Spalten → downstream Code (groupby, plot, page)
+    # crasht. Wir geben das leere DF mit den erwarteten Spalten zurück.
+    if df.empty:
+        df = pd.DataFrame(
+            columns=[
+                "ID",
+                "Spieler",
+                "Preis",
+                "Aktueller_Marktwert",
+                "Punkte",
+                "Spiele",
+                "PpS",
+            ]
+        )
+    else:
         df["Punkte"] = pd.to_numeric(df["Punkte"], downcast="integer")
 
     return df
