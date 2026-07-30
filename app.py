@@ -44,18 +44,8 @@ st.title("Comunio App")
 # ergänzt werden.
 spielzeit = st.selectbox("Spielzeit", list(crud.SEASON_DATE_RANGES.keys()), index=0)
 
-# Manual cache bypass button
-if "cache_bypass" not in st.session_state:
-    st.session_state.cache_bypass = False
-
-col1, col2 = st.columns([1, 10])
-with col1:
-    if st.button("🔄 Daten neu laden"):
-        st.session_state.cache_bypass = True
-        st.rerun()
-
-# Get current date for caching (hourly granularity, or use cache bypass)
-date = pd.to_datetime("today").hour if not st.session_state.cache_bypass else None
+# Get current date for caching (hourly granularity)
+date = pd.to_datetime("today").hour
 
 # Load data — all via @st.cache_data, keyed by (spielzeit, date)
 # No session_state needed: cache_data handles deduplication per season
