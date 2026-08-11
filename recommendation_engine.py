@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from statistics import mean, median
 
 import club_mapping
+from crud.players import get_current_market_values_bulk
 from database import get_db
 import live_endpoints
 import live_data_utils
@@ -731,6 +732,14 @@ def run_recommendations(db, token: str | None = None) -> dict[str, list[Recommen
     squad = live_endpoints.get_squad(token)
     squad_items = squad.get("items", [])
     own_player_ids = {p.get("id") for p in squad_items}
+    # Bulk-Lookup der aktuellen Marktwerte aus Players.price_history.
+    # Dieselbe Datenquelle wie der Home-Tab — squad_response der Comunio-API
+    # hat das Feld entweder nicht oder unter unbekannten Namen, deshalb
+    # verlassen wir uns auf die zuletzt vom Cron geschriebenen Werte.
+    if own_player_ids:
+        squad_market_values = get_current_market_values_bulk(db, list(own_player_ids))
+    else:
+        squad_market_values = {}
 
     # Club-Lookup einmalig
     club_lookup = {}  # cache, falls derselbe Club mehrfach kommt
@@ -771,17 +780,22 @@ def run_recommendations(db, token: str | None = None) -> dict[str, list[Recommen
         # Squad-Items können den Marktwert unter verschiedenen Feldnamen führen
         # (Comunio hat die Schema-Bezeichnungen über die Jahre variiert) und
         # sowohl am Item selbst als auch am eingebetteten Player-Objekt.
-        # Wir probieren mehrere Stellen, statt nur "quotedPrice or value".
-        squad_price = (
-            player.get("quotedPrice")
-            or player.get("value")
-            or player.get("worth")
-            or player.get("marketValue")
-            or p.get("quotedPrice")
-            or p.get("value")
-            or p.get("worth")
-            or p.get("marketValue")
-        )
+        # Marktwert aus MongoDB-Bulk-Lookup (gleiche Quelle wie Home-Tab).
+        # Fallback auf die alten Feldnamen, falls der Spieler noch nicht im
+        # price_history ist (Cron hat ihn noch nicht verarbeitet).
+        player_id = p.get("id")
+        squad_price = squad_market_values.get(player_id)
+        if not squad_price:
+            squad_price = (
+                player.get("quotedPrice")
+                or player.get("value")
+                or player.get("worth")
+                or player.get("marketValue")
+                or p.get("quotedPrice")
+                or p.get("value")
+                or p.get("worth")
+                or p.get("marketValue")
+            )
         squad_recommended = (
             player.get("recommendedPrice")
             or player.get("minimumBid")
