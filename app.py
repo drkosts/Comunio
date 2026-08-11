@@ -1,5 +1,7 @@
+import os
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timedelta, timezone
 import crud
 from database import get_db
 import summary_stats as statistics
@@ -12,6 +14,26 @@ from modules import admin
 
 # Initialize database connection
 db = get_db()
+
+from update_jobs import login_to_comunio
+
+_cached_token = {"value": None, "expires_at": None}
+
+
+def _get_comunio_token() -> str:
+    """Holt einen frischen Comunio-Token aus st.secrets oder .env und cached 50min."""
+    now = datetime.now(timezone.utc)
+    if _cached_token["value"] and _cached_token["expires_at"] > now:
+        return _cached_token["value"]
+
+    user = st.secrets.get("comunio", {}).get("username") or os.environ.get("COMUNIO_USERNAME")
+    pw = st.secrets.get("comunio", {}).get("password") or os.environ.get("COMUNIO_PASSWORD")
+    if not user or not pw:
+        st.error("Comunio-Credentials fehlen (st.secrets['comunio'] oder .env).")
+        st.stop()
+    _cached_token["value"] = login_to_comunio(user, pw)
+    _cached_token["expires_at"] = now + timedelta(minutes=50)
+    return _cached_token["value"]
 
 # Configure Streamlit page
 st.set_page_config(
@@ -34,6 +56,7 @@ page = st.sidebar.radio(
         "Statistics",
         "Head-to-Head",
         "Daten aktualisieren",
+        "Empfehlungen",
     ],
 )
 
@@ -70,3 +93,7 @@ elif page == "Head-to-Head":
     head_to_head.show(transfers_data, spielzeit)
 elif page == "Daten aktualisieren":
     admin.show(db, transfers_data, spielzeit)
+elif page == "Empfehlungen":
+    from modules import recommendations as rec_page
+    token = _get_comunio_token()
+    rec_page.show(db, token)
