@@ -133,6 +133,12 @@ def show(db, transfers, spielzeit):  # spielzeit nur für Konsistenz mit anderen
             with st.status("Transfer-Update läuft …", expanded=True) as status:
                 progress.progress(0.3, text="Transfer-Update läuft …")
                 update_jobs.refresh_transfers(db, log=log)
+                # Cache der Datenseiten (Transfers, Players, Home, …) leeren,
+                # damit der nächste Render die frisch geschriebenen Daten
+                # aus der DB liest. Ohne clear() hält @st.cache_data seinen
+                # Snapshot bis zur nächsten vollen Stunde, und die
+                # Transfers-Seite zeigt weiter den alten Stand.
+                st.cache_data.clear()
                 progress.progress(1.0, text="Transfer-Update fertig ✅")
                 status.update(label="Transfer-Update fertig ✅", state="complete")
         except Exception as e:
