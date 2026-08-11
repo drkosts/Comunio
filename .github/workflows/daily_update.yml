@@ -30,12 +30,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd comunio_datenverarbeitung
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run daily update
-        working-directory: comunio_datenverarbeitung
         env:
           # Diese Secrets legst du in
           # GitHub → Repo → Settings → Secrets and variables → Actions
