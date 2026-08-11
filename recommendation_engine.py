@@ -38,6 +38,10 @@ import seasonality_analysis
 
 logger = logging.getLogger(__name__)
 
+# Der User-ID, dessen Squad geladen wird. Kommt aus live_endpoints.USER_ID.
+# Hier hartcodiert als Display-Name; im Dashboard hartcodiert auf Hansi Flick.
+OWNER_DISPLAY_NAME = "Hansi Flick"
+
 # ---------------------------------------------------------------------------
 # Konfiguration — Gewichte für die Score-Berechnung
 # ---------------------------------------------------------------------------
@@ -126,6 +130,7 @@ class Recommendation:
     sell_reasons: list[str]
     suggested_bid_price: int | None
     suggested_ask_price: int | None
+    owner_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -785,6 +790,7 @@ def run_recommendations(db, token: str | None = None) -> dict[str, list[Recommen
             sell_reasons=sell_reasons,
             suggested_bid_price=None,
             suggested_ask_price=ask,
+            owner_name=OWNER_DISPLAY_NAME,
         )
         out_own.append(rec)
 
