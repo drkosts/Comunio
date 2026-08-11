@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 import crud
 from database import get_db
+from update_jobs import login_to_comunio
 import summary_stats as statistics
 import data_loader
 from modules import home, players, members
@@ -14,8 +15,6 @@ from modules import admin
 
 # Initialize database connection
 db = get_db()
-
-from update_jobs import login_to_comunio
 
 _cached_token = {"value": None, "expires_at": None}
 
