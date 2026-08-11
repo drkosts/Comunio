@@ -29,7 +29,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from statistics import mean, median
-from typing import Iterable
 
 import club_mapping
 from database import get_db
