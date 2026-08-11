@@ -40,9 +40,9 @@ def show(db, transfers, spielzeit):
         transfers_to_display = transfers[
             (transfers["Kaufdatum"] >= date_range[0])
             & (transfers["Kaufdatum"] <= date_range[1])
-        ]
+        ].sort_values("Kaufdatum", ascending=False)
     else:
-        transfers_to_display = transfers
+        transfers_to_display = transfers.sort_values("Kaufdatum", ascending=False)
 
     if search_value:
         filtered_grouped_transfers = transfers_to_display.apply(

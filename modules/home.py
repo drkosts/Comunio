@@ -296,9 +296,9 @@ def display_team_stats(team_df):
 
 def display_team_grid(db, team_df, spielzeit):
     """Display the team in an interactive grid"""
-    
-    # Sort by current market value descending
-    team_df = team_df.sort_values('Aktueller_Marktwert', ascending=False)
+
+    # Sort by purchase date descending
+    team_df = team_df.sort_values('Kaufdatum', ascending=False)
     
     # Configure the grid
     gb = GridOptionsBuilder.from_dataframe(team_df)
