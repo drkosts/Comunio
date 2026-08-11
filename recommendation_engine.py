@@ -767,11 +767,31 @@ def run_recommendations(db, token: str | None = None) -> dict[str, list[Recommen
         p = player.get("_embedded", {}).get("player") or player.get("player") or player
         if p.get("id") in {r.player_id for r in out_market}:
             continue
-        # In ein exchangemarket-Item-Format bringen
+        # In ein exchangemarket-Item-Format bringen.
+        # Squad-Items können den Marktwert unter verschiedenen Feldnamen führen
+        # (Comunio hat die Schema-Bezeichnungen über die Jahre variiert) und
+        # sowohl am Item selbst als auch am eingebetteten Player-Objekt.
+        # Wir probieren mehrere Stellen, statt nur "quotedPrice or value".
+        squad_price = (
+            player.get("quotedPrice")
+            or player.get("value")
+            or player.get("worth")
+            or player.get("marketValue")
+            or p.get("quotedPrice")
+            or p.get("value")
+            or p.get("worth")
+            or p.get("marketValue")
+        )
+        squad_recommended = (
+            player.get("recommendedPrice")
+            or player.get("minimumBid")
+            or p.get("recommendedPrice")
+            or p.get("minimumBid")
+        )
         wrapped = {
             "_embedded": {"player": p},
-            "quotedPrice": player.get("quotedPrice") or player.get("value"),
-            "recommendedPrice": player.get("recommendedPrice"),
+            "quotedPrice": squad_price,
+            "recommendedPrice": squad_recommended,
         }
         features = extract_features(wrapped, db, club_lookup)
         buy_score, buy_reasons = _score_buy(features)
