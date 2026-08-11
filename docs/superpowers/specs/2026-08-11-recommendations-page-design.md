@@ -39,7 +39,7 @@ Die Empfehlungs-Heuristik existiert bereits in `backend/recommendation_engine.py
 
 | Datei | Änderung |
 |---|---|
-| `app.py` | Neuer Eintrag `"Empfehlungen"` in Sidebar-Radio + neuer `elif`-Branch |
+| `app.py` | Neuer Eintrag `"Empfehlungen"` in Sidebar-Radio + neuer `elif`-Branch, der `token` und die Cache-Funktion weitergibt |
 | `requirements.txt` | `bcrypt` ergänzen |
 | `.streamlit/secrets.toml` | Eintrag `page_password_hash = "..."` |
 | Streamlit-Cloud-Secrets | derselbe Eintrag online setzen |
@@ -87,7 +87,7 @@ Nur die zwei Funktionen, die die Engine braucht:
 ### `modules/recommendations.py`
 
 ```python
-def show(db, transfers, spielzeit):  # spielzeit nicht relevant, aber Konsistenz
+def show(db, token, get_recommendations):
     require_auth()
 
     st.title("Empfehlungen")
