@@ -7,7 +7,7 @@ name: Daily Comunio data update
 
 on:
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "0 7 * * *"
   workflow_dispatch:
     # Manueller Trigger über GitHub UI: Actions → Daily Comunio data
     # update → Run workflow. Praktisch zum Testen ohne auf den Timer
