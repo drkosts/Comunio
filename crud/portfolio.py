@@ -630,12 +630,50 @@ def get_or_calculate_portfolio_timeline(db: MongoClient, user_name: str, spielze
 
     try:
         cache_collection = db["PortfolioCache"]
+        transfers_collection = db["Transfers"]
         cache_key = f"{user_name}_{spielzeit}"
         date_from, date_to = get_date_range(spielzeit)
         today = pd.to_datetime('today').date()
 
+        # Stale-Cache-Erkennung: wenn die zugrundeliegende Transfers-Collection
+        # neuere Einträge hat als der Cache abdeckt, ist der Cache falsch
+        # (egal ob "letzter Tag == today" oder älter). Wir invalidieren dann
+        # und fallen in den Vollrecalc.
+        #
+        # Hintergrund: vorher lief der Check nur gegen das heutige Datum.
+        # Wenn ein Cron-Run schiefging und spätere Runs nur das heutige Datum
+        # mitbrachten, wurde der alte (unvollständige) Cache unbegrenzt
+        # ausgeliefert — heute Morgen sichtbar als "Verfügbares Cash
+        # stimmte nicht" für Hansi Flick.
+        latest_transfer = transfers_collection.find_one(
+            {
+                "member_name": user_name,
+                "buy.date": {"$gte": date_from, "$lte": date_to},
+            },
+            sort=[("buy.date", -1)],
+        )
+        latest_transfer_date_str = (
+            latest_transfer["buy"]["date"] if latest_transfer else None
+        )
+
         # Try to get from cache first
         cached_result = cache_collection.find_one({"cache_key": cache_key})
+
+        # Invalidierung, wenn Transaktionen neuer als der Cache sind.
+        if cached_result and latest_transfer_date_str:
+            cached_df = pd.DataFrame(cached_result["timeline_data"])
+            if not cached_df.empty and 'Datum' in cached_df.columns:
+                cached_df['Datum'] = pd.to_datetime(cached_df['Datum']).dt.date
+                last_cached_date = cached_df['Datum'].max()
+                latest_transfer_dt = pd.Timestamp(latest_transfer_date_str).date()
+                if latest_transfer_dt > last_cached_date:
+                    print(
+                        f"Cache stale: latest transfer={latest_transfer_dt} > "
+                        f"cache={last_cached_date}. Forcing full recalc."
+                    )
+                    cache_collection.delete_one({"cache_key": cache_key})
+                    cached_result = None
+            # Wenn cached_df leer war, recale eh per Fall-through.
 
         if cached_result:
             # Get cached timeline data
@@ -1181,10 +1219,39 @@ def get_or_calculate_market_value_timeline(db: MongoClient, user_name: str, spie
 
     try:
         cache_collection = db["MarketValueCache"]
+        transfers_collection = db["Transfers"]
         cache_key = f"{user_name}_{spielzeit}_market"
+
+        # Stale-Cache-Erkennung — gleiche Logik wie PortfolioCache. Wenn
+        # neue Transfers jünger sind als der Cache-Tag, ist die MV-Kurve
+        # falsch (sie kennt neue Spieler nicht und bewertet noch im
+        # Bestand befindliche falsch).
+        date_from, _ = get_date_range(spielzeit)
+        _, date_to = get_date_range(spielzeit)
+        latest_transfer = transfers_collection.find_one(
+            {
+                "member_name": user_name,
+                "buy.date": {"$gte": date_from, "$lte": date_to},
+            },
+            sort=[("buy.date", -1)],
+        )
+        latest_transfer_date_str = (
+            latest_transfer["buy"]["date"] if latest_transfer else None
+        )
 
         # Try to get from cache first
         cached_result = cache_collection.find_one({"cache_key": cache_key})
+
+        # Invalidierung bei Drift
+        if cached_result and latest_transfer_date_str:
+            cached_df = pd.DataFrame(cached_result["timeline_data"])
+            if not cached_df.empty and 'Datum' in cached_df.columns:
+                cached_df['Datum'] = pd.to_datetime(cached_df['Datum']).dt.date
+                last_cached_date = cached_df['Datum'].max()
+                latest_transfer_dt = pd.Timestamp(latest_transfer_date_str).date()
+                if latest_transfer_dt > last_cached_date:
+                    cache_collection.delete_one({"cache_key": cache_key})
+                    cached_result = None
 
         if cached_result:
             timeline_data = cached_result["timeline_data"]

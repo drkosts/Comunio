@@ -76,6 +76,12 @@ def run(args):
 
     summary = {}
 
+    # Token wird vorgehalten, damit das nachfolgende Transfer-Update denselben
+    # Login wiederverwenden kann (sonst zwei logins pro Lauf). Wird vor dem
+    # Player-Update angelegt; wird beim Transfer-Update ggf. neu aufgesetzt,
+    # falls vorher kein Player-Update lief (z.B. via --skip-players).
+    token_for_transfer = None
+
     if not skip_players:
         if only_players or not only:
             _log("Starte Player-Update …")
@@ -83,6 +89,7 @@ def run(args):
             try:
                 token = _login()
                 summary["players"] = update_jobs.refresh_players(db, token, log=_log)
+                token_for_transfer = token
                 _log(
                     f"Player-Update OK in {time.time() - t0:.1f}s: "
                     f"{summary['players']}"
@@ -99,7 +106,14 @@ def run(args):
         _log("Starte Transfer-Update …")
         t0 = time.time()
         try:
-            summary["transfers"] = update_jobs.refresh_transfers(db, log=_log)
+            # Transfer-Update holt seine eigenen News (10 Tage Rückblick) —
+            # dafür braucht's einen Token. Reuse wenn vorhanden, sonst
+            # frisch einloggen.
+            if token_for_transfer is None:
+                token_for_transfer = _login()
+            summary["transfers"] = update_jobs.refresh_transfers(
+                db, token=token_for_transfer, log=_log
+            )
             _log(
                 f"Transfer-Update OK in {time.time() - t0:.1f}s: "
                 f"{summary['transfers']}"

@@ -11,7 +11,7 @@ Fortschritt wird über einen optionalen ``log``-Callable ausgegeben
 aktualisiert wird).
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from pymongo.errors import DuplicateKeyError
@@ -21,6 +21,22 @@ from pymongo.errors import DuplicateKeyError
 COMUNIO_API = "https://comunio.de/api"
 COMMUNITY_ID = "857661"
 USER_ID = "5763843"
+
+# News-Rückblick für die Cron-Pipeline. 10 Tage deckt Wochenenden ab und
+# holt typische Bot-/Cron-Fehlläufe selbständig nach. Duplikate sind über
+# die News-ID als Upsert-Schlüssel abgefangen, daher re-runsicher.
+NEWS_DAYS_BACK = 10
+
+# Sicherheitsnetz gegen Endlos-Pagination (z.B. wenn die API einmal einen
+# Gruppen-Datums-Parser-Edge-Case trifft).
+NEWS_MAX_PAGES = 200
+
+# Cutoff für die Verarbeitung der Roh-Transfers — analog zu NEWS_DAYS_BACK.
+TRANSFER_DAYS_BACK = 10
+
+# Spieler mit `buy.date` älter als dieser Floor (ISO-String) werden nie
+# berücksichtigt. Schützt vor Daten aus vor-strukturierten Epochen.
+SEASON_FLOOR_DATE = "2024-07-10"
 
 
 def login_to_comunio(username: str, password: str) -> str:
@@ -129,35 +145,159 @@ def refresh_players(db, token: str, log=print) -> dict:
     return {"players_updated": total}
 
 
-def refresh_transfers(db, log=print) -> dict:
+def _attach_sell(transfers, member_id, player_id, sell, log=print):
+    """Schreibt einen Verkauf an den passenden offenen Kauf. Idempotent.
+
+    Spiegelung der Logik in backend/structure_data_utils.py. Drei
+    Schutzmechanismen:
+
+    1. Doppelattach verhindern — existiert dieser Verkauf (gleiche
+       sell.datetime) bereits, wird er übersprungen.
+    2. Bei mehreren offenen Käufen desselben Spielers wird der ÄLTESTE
+       zuerst geschlossen (FIFO via Sort). Sonst hätte MongoDB je nach
+       Speicherreihenfolge einen beliebigen genommen und damit falsche
+       Verkäufe erfunden.
+    3. Fehlt der offene Kauf, wird der Verkauf stumm verworfen statt zu
+       knallen.
+    """
+    already = transfers.find_one(
+        {
+            "member_id": member_id,
+            "player_id": player_id,
+            "sell.datetime": sell["datetime"],
+        }
+    )
+    if already is not None:
+        return False
+
+    buy = transfers.find_one(
+        {
+            "member_id": member_id,
+            "player_id": player_id,
+            "sell": None,
+        },
+        sort=[("buy.datetime", 1)],
+    )
+    if buy is None:
+        log(
+            f"  sell skipped: player_id={player_id}, member_id={member_id}, "
+            f"sell.date={sell['date']} — kein offener Kauf"
+        )
+        return False
+
+    transfers.update_one({"_id": buy["_id"]}, {"$set": {"sell": sell}})
+    log(
+        f"  sell attached: player_id={player_id}, member_id={member_id}, "
+        f"sell.date={sell['date']}, kaufdatum={buy['buy']['date']}"
+    )
+    return True
+
+
+def refresh_news(db, token, days_back=NEWS_DAYS_BACK, log=print) -> int:
+    """Holt News-Items der letzten ``days_back`` Tage und schreibt sie nach Mongo.
+
+    Paginiert ``/communities/{cid}/users/{uid}/news`` und schreibt jedes Item
+    per Upsert in seine ``type``-Collection (z.B. TRANSACTION_TRANSFER).
+    Identisch zur Backend-Logik in ``crud.save_news_entry``, aber hier ohne
+    ``crud``-Import, damit der Cron-Pfad self-contained bleibt.
+
+    Idempotent: Upsert-Schlüssel ist die News-ID; wiederholte Aufrufe fügen
+    nichts doppelt ein.
+
+    Returns:
+        Anzahl geschriebener / aktualisierter News-Items.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    url = (
+        f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
+        f"/users/{USER_ID}/news?group=true&originaltypes=true"
+    )
+    limit = 20
+    cutoff = datetime.utcnow().date() - timedelta(days=days_back)
+    log(f"Hole News ab {cutoff} (Rückblick: {days_back} Tage)")
+
+    written = 0
+    for page in range(NEWS_MAX_PAGES):
+        final_url = f"{url}&start={page * limit}&limit={limit}"
+        response = requests.get(final_url, headers=headers, timeout=30)
+        response.raise_for_status()
+        groups = response.json().get("newsList", {}).get("groups", {})
+        if not groups:
+            break
+
+        # Eine Seite kann sowohl Tages-Gruppen INNERHALB als auch AUSSERHALB
+        # des Cutoffs enthalten. Erst ALLES scannen, dann erst entscheiden,
+        # ob weitergeblättert wird — sonst bricht eine einzelne alte Gruppe
+        # auf der Seite die Schleife ab, obwohl rechts noch relevante Tage
+        # stehen.
+        reached_cutoff = False
+        for _, single_news in groups.items():
+            try:
+                news_date = datetime.strptime(
+                    single_news["name"], "%Y-%m-%d"
+                ).date()
+            except (ValueError, KeyError):
+                continue
+            if news_date < cutoff:
+                reached_cutoff = True
+                continue
+            if news_date < datetime.strptime(SEASON_FLOOR_DATE, "%Y-%m-%d").date():
+                continue
+            for entry in single_news.get("entries", []):
+                collection = db[entry["type"]]
+                collection.update_one(
+                    {"id": entry["id"]}, {"$set": entry}, upsert=True
+                )
+                written += 1
+
+        if reached_cutoff:
+            break
+    else:
+        log(f"WARN: News-Pagination nach {NEWS_MAX_PAGES} Seiten abgebrochen")
+
+    log(f"News aktualisiert: {written} Einträge")
+    return written
+
+
+def refresh_transfers(db, token=None, days_back=TRANSFER_DAYS_BACK, log=print) -> dict:
     """Liest neue Transactions und merged sie in die Transfers-Collection.
 
-    Spiegelt ``backend/structure_data_utils.process_transfer_raw_data``.
-    Kein Token nötig (Rohdaten liegen schon in ``TRANSACTION_TRANSFER``).
+    Spiegelung von ``backend/structure_data_utils.process_transfer_raw_data``.
+
+    Vor der Verarbeitung wird (falls ``token`` gegeben) automatisch die
+    News-Pipeline (``refresh_news``) angestoßen, damit die Roh-Daten
+    überhaupt in TRANSACTION_TRANSFER liegen. Das macht den Cron-Pfad
+    unabhängig vom ``backend/``-Skript.
+
+    Verarbeitet die letzten ``days_back`` Tage neu (idempotent — Käufe
+    über den Unique-Index dedup-geschützt, Verkäufe über ``_attach_sell``).
+    Frühere Runs mit kaputten Ankern (``latest_transfer["buy"]["date"]``)
+    konnten Käufe verschlucken — der feste Rückblick heilt das ab.
     """
+    if token is not None:
+        n = refresh_news(db, token, days_back=days_back, log=log)
+        log(f"News vorgeladen: {n}")
+
     transactions = db.get_collection("TRANSACTION_TRANSFER")
     transfers = db.get_collection("Transfers")
     members = db.get_collection("Members")
 
-    latest_transfer = transfers.find_one(sort=[("buy.date", -1)])
-    if latest_transfer is None:
-        log("Transfers: noch keine Transfers in DB — Abbruch")
-        return {"transfers_added": 0}
-    latest_transfer_date = latest_transfer["buy"]["date"]
+    cutoff_date = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    log(f"Verarbeite Roh-Transfers ab {cutoff_date} (Rückblick: {days_back} Tage)")
 
     documents = list(
-        transactions.find({"date": {"$gte": latest_transfer_date}}).sort("date", 1)
+        transactions.find({"date": {"$gte": cutoff_date}}).sort("date", 1)
     )
     total = len(documents)
-    log(f"Transfers: {total} neue Dokumente zu verarbeiten")
+    log(f"Transfers: {total} Dokumente zu verarbeiten")
 
     added = 0
     message_types = ["FROM_COMPUTER", "TO_COMPUTER", "BETWEEN_USERS"]
     for document in documents:
         date = document["date"]
         for message_type in message_types:
-            message_content = document["message"].get(message_type)
-            if message_content is None:
+            message_content = document.get("message", {}).get(message_type)
+            if not message_content:
                 continue
             for transfer in message_content:
                 player_id = transfer["tradable"]["id"]
@@ -197,14 +337,6 @@ def refresh_transfers(db, log=print) -> dict:
 
                 elif message_type == "TO_COMPUTER":
                     member_id = transfer["from"]["id"]
-                    existing_transfer_entry = transfers.find_one({
-                        "member_id": member_id,
-                        "player_id": player_id,
-                        "sell": None,
-                        "buy.date": {"$gt": "2024-07-10"},
-                    })
-                    if existing_transfer_entry is None:
-                        continue
                     sell = {
                         "datetime": date,
                         "date": date[:10],
@@ -212,10 +344,7 @@ def refresh_transfers(db, log=print) -> dict:
                         "to_name": transfer["to"]["name"],
                         "to_id": transfer["to"]["id"],
                     }
-                    transfers.update_one(
-                        {"_id": existing_transfer_entry["_id"]},
-                        {"$set": {"sell": sell}},
-                    )
+                    _attach_sell(transfers, member_id, player_id, sell, log=log)
 
                 elif message_type == "BETWEEN_USERS":
                     # Buy-Seite des Käufers anlegen
@@ -235,20 +364,13 @@ def refresh_transfers(db, log=print) -> dict:
                             "member_id": member_id,
                             "member_name": member_name,
                             "buy": buy,
-                            "sell": None,
+                            "sell": sell,
                         })
                         added += 1
                     except DuplicateKeyError:
                         pass
 
                     # Sell-Seite des Verkäufers aktualisieren
-                    existing_transfer_entry = transfers.find_one({
-                        "member_id": transfer["from"]["id"],
-                        "player_id": player_id,
-                        "sell": None,
-                    })
-                    if not existing_transfer_entry:
-                        continue
                     sell = {
                         "datetime": date,
                         "date": date[:10],
@@ -256,9 +378,8 @@ def refresh_transfers(db, log=print) -> dict:
                         "to_name": transfer["to"]["name"],
                         "to_id": transfer["to"]["id"],
                     }
-                    transfers.update_one(
-                        {"_id": existing_transfer_entry["_id"]},
-                        {"$set": {"sell": sell}},
+                    _attach_sell(
+                        transfers, transfer["from"]["id"], player_id, sell, log=log
                     )
 
     log(f"Transfers: fertig — {added} neue Buy-Transfers eingefügt")
