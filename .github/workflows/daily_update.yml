@@ -1,9 +1,8 @@
 name: Daily Comunio data update
 
-# Täglich um 10:00 UTC (= 12:00 MESZ, 11:00 MEZ). Zeitzonen-konvertiert
-# wird nicht — GitHub-Actions-Cron läuft auf UTC. Falls du strikt 10:00
+# Täglich um 07:00 UTC (= 09:00 MESZ, 08:00 MEZ). Falls du strikt 10:00
 # lokale Zeit brauchst, ändere den Cron auf '0 8 * * *' (UTC) für 10:00
-# MESZ im Winter oder behalte 10 UTC (= 12 MESZ im Sommer).
+# MESZ im Winter oder behalte '0 7 * * *' (= 09 MESZ im Sommer).
 
 on:
   schedule:
@@ -22,6 +21,11 @@ jobs:
     # Puffer, ohne sich an die Obergrenze von 360 min heranzutrauen.
     timeout-minutes: 90
 
+    # Das GitHub-Repo IST der comunio_datenverarbeitung/-Ordner (siehe
+    # Repo-Root: app.py, cron_update.py, update_jobs.py etc.). Nach
+    # checkout liegt alles direkt unter $GITHUB_WORKSPACE — kein
+    # working-directory-Subfolder nötig.
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,13 +37,11 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        working-directory: comunio_datenverarbeitung
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run daily update
-        working-directory: comunio_datenverarbeitung
         env:
           # Diese Secrets legst du in
           # GitHub → Repo → Settings → Secrets and variables → Actions
@@ -56,7 +58,6 @@ jobs:
         # Buy-Zeile in Transfers existiert (z.B. weil ein Run teilweise
         # fehlschlug). Exit-Code != 0 lässt die Action visuell auffällig
         # werden, ohne den Lauf als Ganzes zu failen.
-        working-directory: comunio_datenverarbeitung
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
