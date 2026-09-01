@@ -52,39 +52,12 @@ def show(db, transfers, spielzeit):
 
 def display_portfolio_timeline(db, user_name, spielzeit):
     """Display portfolio timeline analysis"""
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.info("📊 **Investment Timeline**\nZeigt Käufe und Verkäufe über die Zeit")
-    
-    with col2:
-        st.info("💰 **Marktwert Timeline**\nZeigt die Entwicklung des Portfolio-Marktwerts")
-    
-    # Add cache control
-    col1, col2 = st.columns([3, 1])
-    # with col2:
-        # if st.button("🔄 Cache leeren", help="Neuberechnung erzwingen"):
-        #     deleted_count = crud.clear_portfolio_cache(db, user_name, spielzeit)
-        #     st.success(f"Cache geleert: {deleted_count} Einträge")
-        #     st.rerun()
-    
+
     # Get timeline data (will use cache if available)
     with st.spinner("Lade Portfolio Timeline..."):
-        start_time = time.time()
         investment_timeline = crud.get_or_calculate_portfolio_timeline(db, user_name, spielzeit)
-        
-        # Debug: Show what dates we have in the timeline
-        if not investment_timeline.empty:
-            min_date = investment_timeline['Datum'].min()
-            max_date = investment_timeline['Datum'].max()
-            st.info(f"📊 Timeline Daten: {len(investment_timeline)} Einträge von {min_date} bis {max_date}")
-        
         market_value_timeline = crud.get_or_calculate_market_value_timeline(db, user_name, spielzeit)
-        end_time = time.time()
-        
-        st.info(f"⚡ Ladezeit: {end_time - start_time:.2f} Sekunden")
-    
+
     if investment_timeline.empty and market_value_timeline.empty:
         st.warning("Keine Timeline-Daten verfügbar für den ausgewählten Benutzer.")
         return
@@ -286,7 +259,26 @@ def display_team_stats(team_df, db=None, user_name=None, spielzeit="2026/2027"):
         except Exception:
             bonus_total = 0
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    # Aktuelles Vermögen = Aktueller Wert + verfügbares Cash. Cash kommt
+    # aus dem letzten Eintrag der Portfolio-Timeline (gleiche Quelle wie
+    # `display_timeline_stats`); fallback auf Schätzwert wenn nicht da.
+    available_cash = 0
+    if db is not None and user_name:
+        try:
+            timeline = crud.get_or_calculate_portfolio_timeline(
+                db, user_name, spielzeit,
+            )
+            if timeline is not None and not timeline.empty and "Verfuegbares_Cash" in timeline.columns:
+                available_cash = int(timeline["Verfuegbares_Cash"].iloc[-1])
+        except Exception:
+            available_cash = 0
+    total_wealth = current_value + available_cash
+
+    STARTING_BUDGET = 40_000_000
+    vs_budget = total_wealth - STARTING_BUDGET
+    vs_budget_pct = (vs_budget / STARTING_BUDGET * 100) if STARTING_BUDGET else 0
+
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
     with col1:
         st.metric("Anzahl Spieler", len(team_df))
@@ -298,17 +290,29 @@ def display_team_stats(team_df, db=None, user_name=None, spielzeit="2026/2027"):
         st.metric("Aktueller Wert", f"{current_value:,.0f} €")
 
     with col4:
-        st.metric("Gewinn/Verlust", f"{total_difference:,.0f} €", delta=f"{percentage_change:+.1f}%")
+        st.metric("Cash", f"{available_cash:,.0f} €")
 
     with col5:
-        avg_value = current_value / len(team_df) if len(team_df) > 0 else 0
-        st.metric("Ø Spielerwert", f"{avg_value:,.0f} €")
+        st.metric(
+            "Aktuelles Vermögen",
+            f"{total_wealth:,.0f} €",
+            delta=f"{vs_budget:+,.0f} € vs. 40M",
+            help="Aktueller Wert + Cash. Delta gegen das Startvermögen von 40 Mio €.",
+        )
 
     with col6:
         st.metric(
             "Boni (Saison)",
             f"{bonus_total:,.0f} €",
             help="Summe per-Point-Bonus + Tagesplatzierungen",
+        )
+
+    with col7:
+        st.metric(
+            "vs. 40 Mio",
+            f"{vs_budget:+,.0f} €",
+            delta=f"{vs_budget_pct:+.1f}%",
+            help="Performance gegen das Comunio-Startvermögen.",
         )
 
 
