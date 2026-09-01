@@ -49,6 +49,7 @@ jobs:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           COMUNIO_USERNAME: ${{ secrets.COMUNIO_USERNAME }}
           COMUNIO_PASSWORD: ${{ secrets.COMUNIO_PASSWORD }}
+          AUDIT_SEASON: "2026/2027"
         run: |
           # Nur Player-Marktwerte. Transfer-News wird separat stündlich
           # durch .github/workflows/hourly_transfers.yml aktualisiert.
@@ -56,6 +57,18 @@ jobs:
           # FROM_COMPUTER-Buys nur morgens; ein stündlicher Transfer-Lauf
           # deckt beides ab.
           python cron_update.py --only players --continue-on-error
+
+      - name: Refresh season bonuses
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          COMUNIO_USERNAME: ${{ secrets.COMUNIO_USERNAME }}
+          COMUNIO_PASSWORD: ${{ secrets.COMUNIO_PASSWORD }}
+          AUDIT_SEASON: "2026/2027"
+        run: |
+          # Matchday-Werte ändern sich nur einmal pro Woche. Ein täglicher
+          # Lauf reicht; ist idempotent (Unique-Index), frischt ggf.
+          # korrigierte Beträge auf.
+          python cron_update.py --only bonuses --continue-on-error
 
       - name: Audit ownership-vs-transfers
         # Liest nur aus der DB, schreibt nichts — fängt Fälle ab, in denen
@@ -65,6 +78,7 @@ jobs:
         # werden, ohne den Lauf als Ganzes zu failen.
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
+          AUDIT_SEASON: "2026/2027"
         run: |
           if [ -f audit_owners.py ]; then
             python audit_owners.py || echo "::warning::ownership-vs-transfers audit reported issues"
