@@ -50,7 +50,12 @@ jobs:
           COMUNIO_USERNAME: ${{ secrets.COMUNIO_USERNAME }}
           COMUNIO_PASSWORD: ${{ secrets.COMUNIO_PASSWORD }}
         run: |
-          python cron_update.py --continue-on-error
+          # Nur Player-Marktwerte. Transfer-News wird separat stündlich
+          # durch .github/workflows/hourly_transfers.yml aktualisiert.
+          # Begründung: Mitspieler-Transfers passieren den ganzen Tag,
+          # FROM_COMPUTER-Buys nur morgens; ein stündlicher Transfer-Lauf
+          # deckt beides ab.
+          python cron_update.py --only players --continue-on-error
 
       - name: Audit ownership-vs-transfers
         # Liest nur aus der DB, schreibt nichts — fängt Fälle ab, in denen

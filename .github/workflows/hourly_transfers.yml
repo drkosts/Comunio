@@ -1,0 +1,59 @@
+name: Hourly transfer news update
+
+# Holt jede Stunde die Comunio-News ab und schreibt daraus die
+# Transfers-Collection. Läuft separat vom täglichen Player-Update, weil
+# Mitspieler-Transfers den ganzen Tag passieren — nur FROM_COMPUTER-Buys
+# sind morgens. Ein stündlicher Lauf mit idempotenter Verarbeitung
+# (Unique-Index auf Käufe, dedup-geschützte Verkäufe) ist hier
+# korrekt: derselbe Tag wird stündlich neu durchlaufen, fügt aber nur
+# wirklich neue Käufe/Verkäufe ein.
+#
+# Cron auf Minute 17, damit der morgendliche Spieler-Lauf um 07:00
+# und die frühen FROM_COMPUTER-Buys (typischerweise 05:00-07:00 UTC)
+# nicht gleichzeitig mit einem Hourly-Transfer-Run konkurrieren.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    # Manueller Trigger: Actions → Hourly transfer news update → Run.
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run transfer update
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          COMUNIO_USERNAME: ${{ secrets.COMUNIO_USERNAME }}
+          COMUNIO_PASSWORD: ${{ secrets.COMUNIO_PASSWORD }}
+        run: |
+          # --only transfers: springt das Player-Update komplett.
+          # Token-Refresh entfällt hier — der Transfer-Lauf ist nach
+          # 5 News-Pages + ein paar Sekunden Roh-Verarbeitung fertig,
+          # also weit unter dem 30-min-Token-Limit.
+          python cron_update.py --only transfers --continue-on-error
+
+      - name: Audit ownership-vs-transfers
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: |
+          if [ -f audit_owners.py ]; then
+            python audit_owners.py || echo "::warning::ownership-vs-transfers audit reported issues"
+          fi
