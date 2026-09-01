@@ -493,30 +493,42 @@ def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
     """
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1) Eventliste vom Wurzel-Endpoint holen (Matchday-IDs)
-    root_url = (
-        f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
-        f"/standings?wpe=true"
-    )
-    root = requests.get(root_url, headers=headers, timeout=30)
-    root.raise_for_status()
-    events = (
-        root.get("_embedded", {})
-        .get("formerEventsWithPoints", {})
-        .get("events", [])
-    )
-
     season = season or "2026/2027"
     season_year = int(season.split("/")[0])
 
-    # Nur MATCHDAY-Events (kein SEASON_END, kein MATCHDAY_SHIFTED) der
-    # aktuellen Saison.
-    matchday_events = [
-        e for e in events
-        if e.get("type") == "MATCHDAY"
-        and e.get("year") == season_year
-        and int(e.get("matchdayKey", 0)) >= 1
-    ]
+    # 1) Matchday-Liste aus SYSTEM_ADMINISTRATION-News holen
+    #    (POINTS_CALCULATION-News enthalten matchday + eventId). Der
+    #    direkte /standings-Endpoint ohne ?period liefert im Pro-Account
+    #    nur eine leere 200, daher dieser Umweg.
+    sys_news = list(db["SYSTEM_ADMINISTRATION"].find(
+        {
+            "message.type": "POINTS_CALCULATION",
+            "message.matchday": {"$exists": True},
+            "message.eventId": {"$exists": True},
+            # Nur aktuelle Saison — Spieltage aus Vorjahren interessieren
+            # uns nicht und würden die Datenmenge unnötig aufblähen.
+            "date": {
+                "$gte": f"{season_year}-07-01",
+                "$lt": f"{season_year+1}-07-01",
+            },
+        },
+        {"message.matchday": 1, "message.eventId": 1, "date": 1, "_id": 0},
+    ))
+    seen_event_ids = set()
+    matchday_events = []
+    for n in sys_news:
+        md = n.get("message", {}).get("matchday")
+        eid = n.get("message", {}).get("eventId")
+        if md is None or eid is None or eid in seen_event_ids:
+            continue
+        seen_event_ids.add(eid)
+        matchday_events.append({
+            "id": eid,
+            "matchdayKey": int(md),
+            "event": f"{md}. Spieltag",
+            "year": season_year,
+        })
+    matchday_events.sort(key=lambda e: e["matchdayKey"])
 
     log(
         f"SeasonBonus: {len(matchday_events)} Matchdays für Saison "
