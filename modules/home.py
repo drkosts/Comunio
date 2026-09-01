@@ -19,7 +19,7 @@ import time
 # das MongoClient-Argument NICHT in den Cache-Key aufzunehmen (Clients
 # sind hashable, aber das wäre Overhead).
 
-_CACHE_TTL = 120  # Sekunden — passt zu unserem stündlichen Cron-Rhythmus
+_CACHE_TTL = 600  # 10 Minuten — passt zum stündlichen Cron-Rhythmus
 
 
 @st.cache_data(ttl=_CACHE_TTL)
