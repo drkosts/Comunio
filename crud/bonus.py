@@ -34,7 +34,13 @@ def get_season_bonuses(
     """
     query = {"season": season}
     if member_name:
-        query["member_name"] = {"$regex": f"^{_norm_first(member_name)}"}
+        # Case-insensitive Prefix-Match (MongoDB $regex ist sonst
+        # case-sensitive — würde "Hansi Flick" nicht auf "hansi"
+        # matchen).
+        query["member_name"] = {
+            "$regex": f"^{_norm_first(member_name)}",
+            "$options": "i",
+        }
 
     rows = list(
         db["SeasonBonus"].find(query, {"_id": 0}).sort([("matchday", 1)])
@@ -114,5 +120,8 @@ def clear_season_bonus_cache(
     """
     query = {"season": season}
     if member_name:
-        query["member_name"] = {"$regex": f"^{_norm_first(member_name)}"}
+        query["member_name"] = {
+            "$regex": f"^{_norm_first(member_name)}",
+            "$options": "i",
+        }
     return db["SeasonBonus"].delete_many(query).deleted_count
