@@ -602,6 +602,30 @@ def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
             counts["per_point"] += 1
             positions.append((member_id, member_name, pos, points))
 
+        # 3a) Fallback: Comunio liefert manchmal position=null (z.B. bevor
+        # die volle Tabelle gerendert ist). Wir leiten die Position dann
+        # aus den Punkten ab — höchste Punktzahl = Position 1, niedrigste
+        # (oder 0) = letzte Position. Wer mit echten 0-Punkten "letzter"
+        # ist, kriegt die Last-Bonus; bei Ties wird geteilt.
+        if positions and all(p[2] == 0 for p in positions):
+            sorted_by_points = sorted(positions, key=lambda p: -p[3])
+            rank_by_pid = {}
+            last_pts = None
+            current_rank = 0
+            for idx, (pid, name, _, pts) in enumerate(sorted_by_points, start=1):
+                if pts != last_pts:
+                    current_rank = idx
+                    last_pts = pts
+                rank_by_pid[pid] = current_rank
+            positions = [
+                (pid, name, rank_by_pid[pid], pts)
+                for pid, name, _, pts in positions
+            ]
+            log(
+                f"  Hinweis: Position-Fallback aktiv (Comunio lieferte "
+                f"keine Ränge) — abgeleitet aus lastPoints."
+            )
+
         # 4) First / Last — Tie-Detection per Position
         if positions:
             best_pos = min(p[2] for p in positions)
