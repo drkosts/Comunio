@@ -259,7 +259,7 @@ def main():
             first = _norm_name(m_name).split(" ", 1)[0]
             member_ids = set()
             for r in sb_collection.find(
-                {"season": season, "member_name": {"$regex": f"^{first}"}},
+                {"season": season, "member_name": {"$regex": f"^{first}", "$options": "i"}},
                 {"member_id": 1, "_id": 0},
             ):
                 if r.get("member_id") is not None:
