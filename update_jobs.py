@@ -38,6 +38,20 @@ TRANSFER_DAYS_BACK = 10
 # berücksichtigt. Schützt vor Daten aus vor-strukturierten Epochen.
 SEASON_FLOOR_DATE = "2024-07-10"
 
+# --- Season-Bonus Konstanten ---------------------------------------------
+# Comunio schüttet nach jedem Spieltag zwei Bonusarten aus:
+#   1. per-point:  €10.000 pro Matchday-Punkt eines Mitspielers
+#   2. day_first / day_last:  €250.000 für Erst- und Letztplatzierten,
+#      gleichmäßig aufgeteilt bei Ties (z.B. 2 geteilt → je €125.000).
+# Die Raten werden hier zentral gepflegt — wenn der Communityleiter sie
+# ändert, ist das die einzige Stelle, die angefasst werden muss.
+PER_POINT_BONUS_EUR = 10_000
+DAY_FIRST_BONUS_EUR = 250_000
+DAY_LAST_BONUS_EUR = 250_000
+SEASON_BONUS_KIND_PER_POINT = "per_point"
+SEASON_BONUS_KIND_DAY_FIRST = "day_first"
+SEASON_BONUS_KIND_DAY_LAST = "day_last"
+
 
 def login_to_comunio(username: str, password: str) -> str:
     """Loggt sich bei Comunio ein und liefert das access_token (Bearer).
@@ -458,3 +472,188 @@ def refresh_transfers(db, token=None, days_back=TRANSFER_DAYS_BACK, log=print) -
 
     log(f"Transfers: fertig — {added} neue Buy-Transfers eingefügt")
     return {"transfers_added": added}
+
+
+def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
+    """Holt Boni (per-point + first/last) aus Comunio-Standings und schreibt
+    sie in die `SeasonBonus`-Collection.
+
+    Idempotent: Upsert-Schlüssel (season, matchday, member_id, kind) ist
+    unique. Re-Runs aktualisieren nur Felder wie `amount` und
+    `fetched_at`, fügen nichts doppelt ein.
+
+    Args:
+        db:      Mongo-DB-Handle.
+        token:   Bearer-Token von Comunio.
+        season:  z.B. "2026/2027" — Default fällt auf "2026/2027".
+        log:     Logging-Callable.
+
+    Returns:
+        Dict mit Counts pro kind + skipped.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1) Eventliste vom Wurzel-Endpoint holen (Matchday-IDs)
+    root_url = (
+        f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
+        f"/standings?wpe=true"
+    )
+    root = requests.get(root_url, headers=headers, timeout=30)
+    root.raise_for_status()
+    events = (
+        root.get("_embedded", {})
+        .get("formerEventsWithPoints", {})
+        .get("events", [])
+    )
+
+    season = season or "2026/2027"
+    season_year = int(season.split("/")[0])
+
+    # Nur MATCHDAY-Events (kein SEASON_END, kein MATCHDAY_SHIFTED) der
+    # aktuellen Saison.
+    matchday_events = [
+        e for e in events
+        if e.get("type") == "MATCHDAY"
+        and e.get("year") == season_year
+        and int(e.get("matchdayKey", 0)) >= 1
+    ]
+
+    log(
+        f"SeasonBonus: {len(matchday_events)} Matchdays für Saison "
+        f"{season_year}/{season_year+1}"
+    )
+
+    sb = db["SeasonBonus"]
+    counts = {"per_point": 0, "day_first": 0, "day_last": 0, "skipped": 0}
+
+    for ev in matchday_events:
+        period_id = ev["id"]
+        matchday_key = ev["matchdayKey"]
+
+        # 2) Per-Matchday-Standings holen
+        url = (
+            f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
+            f"/standings?period={period_id}&wpe=true"
+        )
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            log(f"SeasonBonus: Matchday {matchday_key} fetch failed ({e}), skip")
+            counts["skipped"] += 1
+            continue
+
+        data = resp.json()
+        items = data.get("items") or []
+        if not items:
+            log(f"SeasonBonus: Matchday {matchday_key} has no items, skip")
+            counts["skipped"] += 1
+            continue
+
+        # 3) Per-Point für jeden Mitspieler
+        positions = []  # für Tie-Detection
+        for it in items:
+            user = (it.get("_embedded") or {}).get("user") or {}
+            member_id = user.get("id")
+            member_name = (user.get("name") or "").strip()
+            try:
+                points = int(it.get("lastPoints") or 0)
+            except (TypeError, ValueError):
+                points = 0
+            try:
+                pos = int(it.get("position") or 0)
+            except (TypeError, ValueError):
+                pos = 0
+            if member_id is None or points <= 0:
+                continue
+            amount = points * PER_POINT_BONUS_EUR
+            sb.update_one(
+                {
+                    "season": season,
+                    "matchday": matchday_key,
+                    "member_id": member_id,
+                    "kind": SEASON_BONUS_KIND_PER_POINT,
+                },
+                {
+                    "$set": {
+                        "matchday_id": period_id,
+                        "matchday_label": ev.get("event", ""),
+                        "member_name": member_name,
+                        "amount": amount,
+                        "points": points,
+                        "source": "standings",
+                        "fetched_at": datetime.utcnow().isoformat(),
+                    },
+                },
+                upsert=True,
+            )
+            counts["per_point"] += 1
+            positions.append((member_id, member_name, pos, points))
+
+        # 4) First / Last — Tie-Detection per Position
+        if positions:
+            best_pos = min(p[2] for p in positions)
+            worst_pos = max(p[2] for p in positions)
+            best_count = sum(1 for p in positions if p[2] == best_pos)
+            worst_count = sum(1 for p in positions if p[2] == worst_pos)
+            best_each = DAY_FIRST_BONUS_EUR // best_count if best_count else 0
+            worst_each = DAY_LAST_BONUS_EUR // worst_count if worst_count else 0
+            for member_id, member_name, pos, _ in positions:
+                if pos == best_pos and best_each > 0:
+                    sb.update_one(
+                        {
+                            "season": season,
+                            "matchday": matchday_key,
+                            "member_id": member_id,
+                            "kind": SEASON_BONUS_KIND_DAY_FIRST,
+                        },
+                        {
+                            "$set": {
+                                "matchday_id": period_id,
+                                "matchday_label": ev.get("event", ""),
+                                "member_name": member_name,
+                                "amount": best_each,
+                                "points": None,
+                                "source": "standings",
+                                "fetched_at": datetime.utcnow().isoformat(),
+                            },
+                        },
+                        upsert=True,
+                    )
+                    counts["day_first"] += 1
+                if pos == worst_pos and worst_each > 0:
+                    sb.update_one(
+                        {
+                            "season": season,
+                            "matchday": matchday_key,
+                            "member_id": member_id,
+                            "kind": SEASON_BONUS_KIND_DAY_LAST,
+                        },
+                        {
+                            "$set": {
+                                "matchday_id": period_id,
+                                "matchday_label": ev.get("event", ""),
+                                "member_name": member_name,
+                                "amount": worst_each,
+                                "points": None,
+                                "source": "standings",
+                                "fetched_at": datetime.utcnow().isoformat(),
+                            },
+                        },
+                        upsert=True,
+                    )
+                    counts["day_last"] += 1
+
+    # 5) Unique compound index sicherstellen (idempotent)
+    sb.create_index(
+        [("season", 1), ("matchday", 1), ("member_id", 1), ("kind", 1)],
+        unique=True,
+        name="season_matchday_member_kind_unique",
+    )
+
+    log(
+        f"SeasonBonus fertig: per_point={counts['per_point']} "
+        f"day_first={counts['day_first']} day_last={counts['day_last']} "
+        f"skipped={counts['skipped']}"
+    )
+    return counts
