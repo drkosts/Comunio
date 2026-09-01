@@ -4,6 +4,9 @@ from pymongo.mongo_client import MongoClient
 import pandas as pd
 import logging
 from typing import Dict, Tuple
+from datetime import timedelta
+
+import crud.bonus as bonus_crud
 
 # Configure logging for debugging market value calculations
 logging.basicConfig(
@@ -1048,6 +1051,39 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
                 'price': transfer['sell']['price']
             })
 
+    # Saison-Boni (per-point + first/last) als Cash-Flow-Events einhängen.
+    # Wir mappen die Matchday-Nummer (1–34) auf ein konkretes Datum, indem
+    # wir vom Saison-Start aus Sonntags-Wochen vorwärts gehen — Comunio-
+    # Spieltage laufen i.d.R. Sa/So, und die POINTS_CALCULATION-News kommen
+    # typischerweise am Sonntag Abend. Das ist eine pragmatische Heuristik;
+    # falls Comunio je nachmittags bucht, verschiebt sich der Cash-Flow um
+    # max. einen Tag — akzeptabel.
+    season_start = pd.to_datetime(date_from).date()
+    days_to_sunday = (6 - season_start.weekday()) % 7
+    first_sunday = season_start + timedelta(days=days_to_sunday)
+    def matchday_to_date(md_key):
+        return first_sunday + timedelta(weeks=int(md_key) - 1)
+
+    bonus_history = bonus_crud.get_member_matchday_history(
+        db, spielzeit, user_name,
+    )
+    if not bonus_history.empty:
+        for _, brow in bonus_history.iterrows():
+            md_key = int(brow["matchday"])
+            bonus_dt = matchday_to_date(md_key)
+            if bonus_dt < season_start:
+                continue
+            total_bonus = int(brow["total"] or 0)
+            if total_bonus <= 0:
+                continue
+            all_events.append({
+                "date": bonus_dt.strftime("%Y-%m-%d"),
+                "type": "bonus",
+                "player_id": None,
+                "player_name": "Saison-Bonus",
+                "price": total_bonus,
+            })
+
     # Sort all events by date
     all_events.sort(key=lambda x: x['date'])
 
@@ -1114,6 +1150,11 @@ def calculate_portfolio_timeline_optimized(db: MongoClient, user_name: str, spie
                         last_event_type = 'sell'
                         last_event_player = event['player_name']
                         last_event_price = event['price']
+                elif event['type'] == 'bonus':
+                    available_cash += event['price']
+                    last_event_type = 'bonus'
+                    last_event_player = event['player_name']
+                    last_event_price = event['price']
 
         # Calculate daily portfolio values (regardless of whether there were events)
         total_investment = sum(player['buy_price'] for player in portfolio_players.values())
