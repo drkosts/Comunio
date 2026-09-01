@@ -606,10 +606,37 @@ def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
         if positions:
             best_pos = min(p[2] for p in positions)
             worst_pos = max(p[2] for p in positions)
+
+            # Edge case: wenn best_pos == worst_pos (z.B. Comunio hat alle
+            # Spieler auf eine einzige Position gesetzt, oder nur ein Spieler
+            # ist im Ranking), macht "First UND Last" pro Person keinen
+            # Sinn. Wir behandeln das als "alle ganz oben, niemand ganz
+            # unten" und schreiben NUR day_first, damit die 250k nicht
+            # doppelt ausgeschüttet werden.
+            degenerate = best_pos == worst_pos
+
+            if degenerate:
+                # Ein einziger Spieler oder alle gleich: nur "first"
+                # gewinnen, "last" leer.
+                worst_pos_for_filter = None
+            else:
+                worst_pos_for_filter = worst_pos
+
             best_count = sum(1 for p in positions if p[2] == best_pos)
-            worst_count = sum(1 for p in positions if p[2] == worst_pos)
+            worst_count = (
+                sum(1 for p in positions if p[2] == worst_pos)
+                if worst_pos_for_filter is not None else 0
+            )
             best_each = DAY_FIRST_BONUS_EUR // best_count if best_count else 0
             worst_each = DAY_LAST_BONUS_EUR // worst_count if worst_count else 0
+
+            # Spieler, die day_first bekommen, dürfen NICHT gleichzeitig
+            # day_last bekommen. Wenn best_pos == worst_pos (oder sie sich
+            # überschneiden), wäre das doppelte Auszahlung — wir setzen
+            # für solche Mitglieder day_last = 0.
+            if degenerate:
+                worst_each = 0
+
             for member_id, member_name, pos, _ in positions:
                 if pos == best_pos and best_each > 0:
                     sb.update_one(
@@ -633,7 +660,7 @@ def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
                         upsert=True,
                     )
                     counts["day_first"] += 1
-                if pos == worst_pos and worst_each > 0:
+                if not degenerate and pos == worst_pos and worst_each > 0:
                     sb.update_one(
                         {
                             "season": season,
