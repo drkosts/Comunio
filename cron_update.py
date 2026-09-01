@@ -10,9 +10,10 @@ Credentials kommen aus Umgebungsvariablen:
   COMUNIO_PASSWORD     — Pflicht für Player-Update
 
 Aufruf:
-  python cron_update.py                # beide Updates
+  python cron_update.py                # alle drei Updates
   python cron_update.py --only players # nur Player-Update
   python cron_update.py --only transfers
+  python cron_update.py --only bonuses
   python cron_update.py --skip-players # Transfer-Update ohne Login
 """
 
@@ -71,19 +72,19 @@ def run(args):
     db = _connect_db()
 
     only = args.only
-    skip_players = args.skip_players or only == "transfers"
-    only_players = only == "players"
+    skip_players = args.skip_players or only in ("transfers", "bonuses")
+    skip_transfers = only == "players" or only == "bonuses"
+    only_bonuses = only == "bonuses"
 
     summary = {}
 
-    # Token wird vorgehalten, damit das nachfolgende Transfer-Update denselben
-    # Login wiederverwenden kann (sonst zwei logins pro Lauf). Wird vor dem
-    # Player-Update angelegt; wird beim Transfer-Update ggf. neu aufgesetzt,
-    # falls vorher kein Player-Update lief (z.B. via --skip-players).
+    # Token wird vorgehalten, damit nachfolgende Updates denselben
+    # Login wiederverwenden können (sonst mehrere logins pro Lauf).
     token_for_transfer = None
+    token_for_bonuses = None
 
     if not skip_players:
-        if only_players or not only:
+        if only in (None, "players"):
             _log("Starte Player-Update …")
             t0 = time.time()
             try:
@@ -100,6 +101,7 @@ def run(args):
                     log=_log,
                 )
                 token_for_transfer = token
+                token_for_bonuses = token
                 _log(
                     f"Player-Update OK in {time.time() - t0:.1f}s: "
                     f"{summary['players']}"
@@ -110,9 +112,9 @@ def run(args):
                 if not args.continue_on_error:
                     sys.exit(1)
     else:
-        _log("Player-Update übersprungen (--skip-players / --only transfers).")
+        _log("Player-Update übersprungen.")
 
-    if not only_players:
+    if not skip_transfers:
         _log("Starte Transfer-Update …")
         t0 = time.time()
         try:
@@ -134,7 +136,29 @@ def run(args):
             if not args.continue_on_error:
                 sys.exit(1)
     else:
-        _log("Transfer-Update übersprungen (--only players).")
+        _log("Transfer-Update übersprungen.")
+
+    if only_bonuses or only is None:
+        _log("Starte SeasonBonus-Update …")
+        t0 = time.time()
+        try:
+            if token_for_bonuses is None:
+                token_for_bonuses = _login()
+            season = os.environ.get("AUDIT_SEASON", "2026/2027")
+            summary["bonuses"] = update_jobs.refresh_season_bonuses(
+                db, token=token_for_bonuses, season=season, log=_log,
+            )
+            _log(
+                f"Bonus-Update OK in {time.time() - t0:.1f}s: "
+                f"{summary['bonuses']}"
+            )
+        except Exception as e:
+            _log(f"Bonus-Update FEHLGESCHLAGEN: {e}")
+            summary["bonuses_error"] = str(e)
+            if not args.continue_on_error:
+                sys.exit(1)
+    else:
+        _log("Bonus-Update übersprungen.")
 
     _log(f"Fertig. Zusammenfassung: {summary}")
     return 0 if not any(k.endswith("_error") for k in summary) else 1
@@ -144,7 +168,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument(
         "--only",
-        choices=["players", "transfers"],
+        choices=["players", "transfers", "bonuses"],
         help="Nur dieses Update ausführen.",
     )
     parser.add_argument(
