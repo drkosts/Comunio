@@ -61,38 +61,95 @@ def _make_request(url: str, token: str) -> dict:
     return response.json()
 
 
-def refresh_players(db, token: str, log=print) -> dict:
+def _make_request_with_retry(url, get_token, log=print):
+    """GET mit EINEM Retry bei 401.
+
+    ``get_token`` ist ein Callable, das einen frischen Bearer liefert —
+    typischerweise ein Closure, das bei Bedarf neu einloggt. Bei 401 wird
+    genau EIN weiterer Versuch mit dem frischen Token unternommen; gibt
+    es erneut 401, wird die HTTPError durchgelassen.
+    """
+    response = requests.get(url, headers={"Authorization": f"Bearer {get_token()}"}, timeout=30)
+    if response.status_code == 401:
+        log(f"  401 — Token erneuern und Retry für {url[:80]}…")
+        response = requests.get(
+            url, headers={"Authorization": f"Bearer {get_token(force_refresh=True)}"}, timeout=30
+        )
+    response.raise_for_status()
+    return response.json()
+
+
+def refresh_players(db, token, username=None, password=None,
+                    refresh_interval=300, log=print) -> dict:
     """Holt Spielerliste + Price/Point-History und merged in Players.
 
     Spiegelt ``backend/structure_data_utils.process_players_information``.
     Schreibt pro Spieler ~3 sequenzielle Requests → bei ~800 Spielern
     dauert das einige Minuten; in Streamlit Cloud auf das Timeout achten.
+
+    Token-Refresh:
+      Comunio-Tokens laufen nach ~30 min ab. Bei großen Ligen (~800
+      Spieler) reicht das knapp nicht. Wir erneuern den Token
+      präventiv alle ``refresh_interval`` Fetches (Default 300) UND
+      reagieren zusätzlich auf 401-Antworten mit einem einzelnen
+      Retry. Beides setzt ``username``/``password`` voraus. Ohne
+      Credentials läuft die Funktion wie vorher — der Aufrufer
+      trägt dann das Risiko eines Token-Ablaufs.
     """
     players = db.get_collection("Players")
-    players_list = _make_request(
+
+    # Closure: gibt aktuellen Token zurück, loggt bei Bedarf neu ein.
+    # ``fetches_since_login`` zählt die seit dem letzten Login
+    # durchgeführten Spieler-Updates; alle 3 Calls pro Spieler zählen
+    # als EIN Update (sonst würde der Refresh viel zu früh kommen).
+    fetches_since_login = 0
+    current_token = {"value": token}
+
+    def get_token(force_refresh=False):
+        nonlocal fetches_since_login
+        if force_refresh and username and password:
+            current_token["value"] = login_to_comunio(username, password)
+            fetches_since_login = 0
+            log("  Token erneuert (Re-Login).")
+        return current_token["value"]
+
+    def maybe_proactive_refresh():
+        nonlocal fetches_since_login
+        if (
+            username
+            and password
+            and fetches_since_login >= refresh_interval
+        ):
+            current_token["value"] = login_to_comunio(username, password)
+            fetches_since_login = 0
+            log(f"  Token präventiv erneuert (alle {refresh_interval} Fetches).")
+
+    players_list = _make_request_with_retry(
         f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
         f"/players?start=0&limit=800",
-        token,
+        get_token, log=log,
     )
     players_comunio = players_list["tradables"]
     total = len(players_comunio)
     log(f"Players: {total} Spieler zu aktualisieren")
 
     for i, player in enumerate(players_comunio, start=1):
-        player_info = _make_request(
+        maybe_proactive_refresh()
+        player_info = _make_request_with_retry(
             f"https://www.comunio.de/api/communities/{COMMUNITY_ID}"
             f"/users/{USER_ID}/players/{player['id']}",
-            token,
+            get_token, log=log,
         )
-        price_history = _make_request(
+        price_history = _make_request_with_retry(
             f"https://www.comunio.de/api/players/{player['id']}/quote-history",
-            token,
+            get_token, log=log,
         )
-        points_history = _make_request(
+        points_history = _make_request_with_retry(
             f"https://www.comunio.de/api/players/{player['id']}"
             f"/match-statistics-history",
-            token,
+            get_token, log=log,
         )
+        fetches_since_login += 1
 
         # Existierende History holen und deduplizieren.
         existing_player = players.find_one({"id": player["id"]})

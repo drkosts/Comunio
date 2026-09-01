@@ -87,8 +87,18 @@ def run(args):
             _log("Starte Player-Update …")
             t0 = time.time()
             try:
-                token = _login()
-                summary["players"] = update_jobs.refresh_players(db, token, log=_log)
+                username = os.environ["COMUNIO_USERNAME"]
+                password = os.environ["COMUNIO_PASSWORD"]
+                token = update_jobs.login_to_comunio(username, password)
+                # refresh_players bekommt die Credentials, damit der Token
+                # bei langen Läufen präventiv (alle 300 Fetches) und
+                # reaktiv (auf 401) erneuert werden kann — sonst knallt
+                # es nach ~30 min Token-Ablauf.
+                summary["players"] = update_jobs.refresh_players(
+                    db, token,
+                    username=username, password=password,
+                    log=_log,
+                )
                 token_for_transfer = token
                 _log(
                     f"Player-Update OK in {time.time() - t0:.1f}s: "
