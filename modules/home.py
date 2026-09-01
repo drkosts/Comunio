@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import crud
+import crud.bonus as bonus_crud
 import utils
 import plotly.express as px
 import time
@@ -34,7 +35,7 @@ def show(db, transfers, spielzeit):
         return
     
     # Display team statistics
-    display_team_stats(current_team)
+    display_team_stats(current_team, db=db, user_name=selected_user, spielzeit=spielzeit)
     
     # Add portfolio timeline section
     st.subheader("📈 Portfolio Entwicklung")
@@ -267,31 +268,48 @@ def get_current_team(db, user_name, spielzeit):
     return pd.DataFrame(team_data)
 
 
-def display_team_stats(team_df):
+def display_team_stats(team_df, db=None, user_name=None, spielzeit="2026/2027"):
     """Display team statistics in metrics"""
-    
+
     total_investment = team_df['Kaufpreis'].sum()
     current_value = team_df['Aktueller_Marktwert'].sum()
     total_difference = current_value - total_investment
     percentage_change = (total_difference / total_investment * 100) if total_investment > 0 else 0
-    
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
+
+    # Saisonal akkumulierte Boni (per-point + first/last)
+    bonus_total = 0
+    if db is not None and user_name:
+        try:
+            bonus_total = bonus_crud.get_member_bonus_total(
+                db, season=spielzeit, member_name=user_name,
+            )
+        except Exception:
+            bonus_total = 0
+
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+
     with col1:
         st.metric("Anzahl Spieler", len(team_df))
-    
+
     with col2:
         st.metric("Gesamtinvestition", f"{total_investment:,.0f} €")
-    
+
     with col3:
         st.metric("Aktueller Wert", f"{current_value:,.0f} €")
-    
+
     with col4:
         st.metric("Gewinn/Verlust", f"{total_difference:,.0f} €", delta=f"{percentage_change:+.1f}%")
-    
+
     with col5:
         avg_value = current_value / len(team_df) if len(team_df) > 0 else 0
         st.metric("Ø Spielerwert", f"{avg_value:,.0f} €")
+
+    with col6:
+        st.metric(
+            "Boni (Saison)",
+            f"{bonus_total:,.0f} €",
+            help="Summe per-Point-Bonus + Tagesplatzierungen",
+        )
 
 
 def display_team_grid(db, team_df, spielzeit):
