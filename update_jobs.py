@@ -192,8 +192,25 @@ def refresh_players(db, token, username=None, password=None,
         player_info["price_history"] = combined_price_history
         player_info["point_history"] = combined_points_history
 
+        # Owner-Feld sauber mitschreiben: ist im Response `owner: null`
+        # (Spieler verkauft, wieder auf Transfermarkt), müssen wir es
+        # explizit `$unset`en — sonst bleibt der alte Owner aus der
+        # Vorperiode im Dokument stehen und führt zu falschen
+        # Audit-Treffern ("SOLD_BUT_STALE"). Bei gesetztem Owner reicht
+        # `$set` wie gehabt.
+        owner_present = "owner" in player_info
+        owner_value   = player_info.get("owner")
+        if owner_present and owner_value:
+            update_doc = {"$set": player_info}
+        else:
+            # `owner` aus dem `$set` raushalten und separat unsetten.
+            update_doc = {
+                "$set": {k: v for k, v in player_info.items() if k != "owner"},
+                "$unset": {"owner": ""},
+            }
+
         players.update_one(
-            {"id": player["id"]}, {"$set": player_info}, upsert=True
+            {"id": player["id"]}, update_doc, upsert=True
         )
         if i % 25 == 0 or i == total:
             log(f"  Players: {i}/{total} verarbeitet")
