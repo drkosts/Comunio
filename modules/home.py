@@ -7,11 +7,51 @@ import utils
 import plotly.express as px
 import time
 
+# ---------------------------------------------------------------------------
+# Cache-Wrapper
+# ---------------------------------------------------------------------------
+# AgGrid-Interaktionen (Sortieren, Filtern, Spalten-Umsortieren) lösen in
+# Streamlit einen vollständigen Script-Rerun aus. Ohne diese Caches würde
+# bei jedem Klick in der Tabelle `crud.get_transfers`, `get_current_team`
+# und `get_or_calculate_portfolio_timeline` erneut gegen die DB laufen —
+# spürbar bei großen Transfers-Collections. Wir memoen die Ergebnisse für
+# `ttl` Sekunden. Der führende Unterstrich in `_db` signalisiert Streamlit,
+# das MongoClient-Argument NICHT in den Cache-Key aufzunehmen (Clients
+# sind hashable, aber das wäre Overhead).
+
+_CACHE_TTL = 120  # Sekunden — passt zu unserem stündlichen Cron-Rhythmus
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _cached_get_transfers(_db, spielzeit: str) -> pd.DataFrame:
+    return crud.get_transfers(_db, spielzeit)
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _cached_get_current_team(_db, user_name: str, spielzeit: str) -> pd.DataFrame:
+    return get_current_team(_db, user_name, spielzeit)
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _cached_get_member_bonus_total(_db, season: str, user_name: str) -> int:
+    return bonus_crud.get_member_bonus_total(_db, season=season, member_name=user_name)
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _cached_get_portfolio_timeline(_db, user_name: str, spielzeit: str) -> pd.DataFrame:
+    return crud.get_or_calculate_portfolio_timeline(_db, user_name, spielzeit)
+
+
+@st.cache_data(ttl=_CACHE_TTL)
+def _cached_get_market_value_timeline(_db, user_name: str, spielzeit: str) -> pd.DataFrame:
+    return crud.get_or_calculate_market_value_timeline(_db, user_name, spielzeit)
+
+
 def show(db, transfers, spielzeit):
     """Display the Home page with current team overview"""
-    
+
     st.header("Mein aktuelles Team")
-    
+
     # Guard against empty or malformed transfers data
     if transfers.empty or 'Mitspieler' not in transfers.columns:
         st.warning("Keine Transferdaten für die ausgewählte Saison gefunden.")
@@ -27,8 +67,9 @@ def show(db, transfers, spielzeit):
     with col2:
         st.info(f"Team von: **{selected_user}** | Saison: **{spielzeit}**")
     
-    # Get current team for selected user
-    current_team = get_current_team(db, selected_user, spielzeit)
+    # Get current team for selected user (cached, so AgGrid-Interaktionen
+    # keinen vollen DB-Reload auslösen).
+    current_team = _cached_get_current_team(db, selected_user, spielzeit)
     
     if current_team.empty:
         st.warning(f"Keine aktuellen Spieler für {selected_user} in der Saison {spielzeit} gefunden.")
@@ -53,10 +94,14 @@ def show(db, transfers, spielzeit):
 def display_portfolio_timeline(db, user_name, spielzeit):
     """Display portfolio timeline analysis"""
 
-    # Get timeline data (will use cache if available)
+    # Get timeline data (Streamlit-cached — AgGrid-Sortierung triggert
+    # sonst einen vollen DB-Reload). Die MongoDB-Cache (PortfolioCache)
+    # liegt darunter und macht den ersten Aufruf schnell; die TTL von
+    # 120s hier deckt nur den Fall ab, dass der User innerhalb des
+    # Caches mehrfach auf den Tab klickt.
     with st.spinner("Lade Portfolio Timeline..."):
-        investment_timeline = crud.get_or_calculate_portfolio_timeline(db, user_name, spielzeit)
-        market_value_timeline = crud.get_or_calculate_market_value_timeline(db, user_name, spielzeit)
+        investment_timeline = _cached_get_portfolio_timeline(db, user_name, spielzeit)
+        market_value_timeline = _cached_get_market_value_timeline(db, user_name, spielzeit)
 
     if investment_timeline.empty and market_value_timeline.empty:
         st.warning("Keine Timeline-Daten verfügbar für den ausgewählten Benutzer.")
@@ -253,9 +298,7 @@ def display_team_stats(team_df, db=None, user_name=None, spielzeit="2026/2027"):
     bonus_total = 0
     if db is not None and user_name:
         try:
-            bonus_total = bonus_crud.get_member_bonus_total(
-                db, season=spielzeit, member_name=user_name,
-            )
+            bonus_total = _cached_get_member_bonus_total(db, spielzeit, user_name)
         except Exception:
             bonus_total = 0
 
@@ -265,9 +308,7 @@ def display_team_stats(team_df, db=None, user_name=None, spielzeit="2026/2027"):
     available_cash = 0
     if db is not None and user_name:
         try:
-            timeline = crud.get_or_calculate_portfolio_timeline(
-                db, user_name, spielzeit,
-            )
+            timeline = _cached_get_portfolio_timeline(db, user_name, spielzeit)
             if timeline is not None and not timeline.empty and "Verfuegbares_Cash" in timeline.columns:
                 available_cash = int(timeline["Verfuegbares_Cash"].iloc[-1])
         except Exception:
