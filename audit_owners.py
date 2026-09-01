@@ -244,6 +244,52 @@ def main():
     print(f"\nGHOST (Vor-Saison-Besitz, ignoriert): {ghosts_seen}")
     print(f"TRANSFER_MARKET (Owner=Computer, ignoriert): {on_market}")
 
+    # 5) Bonus-Coverage — jeder Mitspieler mit aktivem Buy sollte für
+    #    jedes abgeschlossene Matchday einen SeasonBonus-Eintrag haben.
+    sb_collection = db["SeasonBonus"]
+    sb_matchdays = sorted(
+        int(m) for m in sb_collection.distinct("matchday", {"season": season})
+        if m is not None
+    )
+
+    if sb_matchdays:
+        missing_bonus = []
+        for m_name, _ in by_member_norm.items():
+            # Map Mitspieler-Vorname → member_id(s) aus SeasonBonus
+            first = _norm_name(m_name).split(" ", 1)[0]
+            member_ids = set()
+            for r in sb_collection.find(
+                {"season": season, "member_name": {"$regex": f"^{first}"}},
+                {"member_id": 1, "_id": 0},
+            ):
+                if r.get("member_id") is not None:
+                    member_ids.add(r["member_id"])
+
+            if not member_ids:
+                missing_bonus.append({"member": m_name, "matchday": "no_bonus_rows_at_all"})
+                continue
+
+            for md in sb_matchdays:
+                has = sb_collection.find_one({
+                    "season": season, "matchday": md,
+                    "member_id": {"$in": list(member_ids)},
+                })
+                if not has:
+                    missing_bonus.append({"member": m_name, "matchday": md})
+
+        print(
+            f"\nBONUS COVERAGE: {len(sb_matchdays)} matchdays audited, "
+            f"{len(missing_bonus)} gaps"
+        )
+        for mb in missing_bonus[:20]:
+            print(f"  - {mb}")
+        if len(missing_bonus) > 20:
+            print(f"  … and {len(missing_bonus) - 20} more")
+    else:
+        print("\nBONUS COVERAGE: keine SeasonBonus-Rows gefunden — "
+              "vermutlich noch nicht gelaufen. Triggere "
+              "`scripts/backfill_season_bonuses.py`.")
+
     action_required = missing_buy + owner_mismatch
     cosmetic = sold_stale
 
