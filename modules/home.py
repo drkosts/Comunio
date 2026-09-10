@@ -56,14 +56,20 @@ def show(db, transfers, spielzeit):
 
     # Manueller Cache-Bust: Praktisch, wenn gerade Bonus- oder Transfer-Daten
     # per Cron/Backfill aktualisiert wurden und das Dashboard nicht bis zum
-    # TTL (10 min) warten soll. Bustet sowohl Streamlit- als auch
-    # MongoDB-Cache (PortfolioCache).
+    # TTL warten soll. Bustet sowohl Streamlit- als auch MongoDB-Cache
+    # (PortfolioCache).
     if st.sidebar.button("🔄 Daten neu laden", help="PortfolioCache + Streamlit-Caches leeren"):
         st.cache_data.clear()
         from update_jobs import bust_portfolio_cache
         bust_portfolio_cache(db)
         st.success("Cache geleert.")
         st.rerun()
+
+    # Build-Marker: zeigt Datum der Code-Version. Nach jedem Deploy
+    # sollte die neueste Zeit erscheinen — sonst hängt der Streamlit-Cache
+    # auf einer alten Code-Version. Hilft auch zu erkennen, ob die App die
+    # Cash-inkl-Bonus-Logik wirklich ausführt.
+    st.sidebar.caption(f"Build: deploy-v3 2026-09-10 — Cash inkl. Boni")
 
     # Guard against empty or malformed transfers data
     if transfers.empty or 'Mitspieler' not in transfers.columns:
