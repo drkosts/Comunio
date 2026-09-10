@@ -116,6 +116,10 @@ def clear_season_bonus_cache(
 ) -> int:
     """Löscht Bonus-Rows (für manuelles Re-Backfill).
 
+    Bust auch den PortfolioCache, weil eine Bonus-Löschung die Cash-Flow-
+    Timeline ändert — sonst sieht das Dashboard weiterhin den alten
+    Bonus-Stand.
+
     Returns Anzahl gelöschter Rows.
     """
     query = {"season": season}
@@ -124,4 +128,7 @@ def clear_season_bonus_cache(
             "$regex": f"^{_norm_first(member_name)}",
             "$options": "i",
         }
-    return db["SeasonBonus"].delete_many(query).deleted_count
+    deleted = db["SeasonBonus"].delete_many(query).deleted_count
+    # PortfolioCache für die Saison invalidieren
+    db["PortfolioCache"].delete_many({"spielzeit": season})
+    return deleted

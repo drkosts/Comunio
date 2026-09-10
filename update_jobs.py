@@ -241,12 +241,15 @@ def _attach_sell(transfers, member_id, player_id, sell, log=print):
 
     1. Doppelattach verhindern — existiert dieser Verkauf (gleiche
        sell.datetime) bereits, wird er übersprungen.
-    2. Bei mehreren offenen Käufen desselben Spielers wird der ÄLTESTE
-       zuerst geschlossen (FIFO via Sort). Sonst hätte MongoDB je nach
-       Speicherreihenfolge einen beliebigen genommen und damit falsche
-       Verkäufe erfunden.
-    3. Fehlt der offene Kauf, wird der Verkauf stumm verworfen statt zu
-       knallen.
+    2. Bei mehreren offenen Käufen desselben Spielers wird der jüngste
+       Kauf vor dem Verkauf geschlossen (LIFO mit Datums-Constraint).
+       Wer einen Spieler mehrfach besitzt und einen davon verkauft,
+       erwartet intuitiv, dass der zuletzt gekaufte als erstes
+       geschlossen wird. Vorher griff hier FIFO, was bei Mehrfachkäufen
+       systematisch den falschen Buy erwischte und Cash-Doppelbuchungen
+       produzierte (siehe test_regression_sell_lifo.py).
+    3. Fehlt der offene Kauf (Verkauf ohne dokumentierten Buy davor),
+       wird der Verkauf stumm verworfen statt zu knallen.
     """
     already = transfers.find_one(
         {
@@ -263,13 +266,14 @@ def _attach_sell(transfers, member_id, player_id, sell, log=print):
             "member_id": member_id,
             "player_id": player_id,
             "sell": None,
+            "buy.datetime": {"$lt": sell["datetime"]},
         },
-        sort=[("buy.datetime", 1)],
+        sort=[("buy.datetime", -1)],
     )
     if buy is None:
         log(
             f"  sell skipped: player_id={player_id}, member_id={member_id}, "
-            f"sell.date={sell['date']} — kein offener Kauf"
+            f"sell.date={sell['date']} — kein offener Kauf vor diesem Verkauf"
         )
         return False
 
@@ -435,7 +439,14 @@ def refresh_transfers(db, token=None, days_back=TRANSFER_DAYS_BACK, log=print) -
                     _attach_sell(transfers, member_id, player_id, sell, log=log)
 
                 elif message_type == "BETWEEN_USERS":
-                    # Buy-Seite des Käufers anlegen
+                    # Buy-Seite des Käufers anlegen. WICHTIG: `sell` MUSS
+                    # vor dem Insert auf None zurückgesetzt werden — sonst
+                    # leakt das Sell-Dict aus der vorherigen Iteration
+                    # (TO_COMPUTER oder BETWEEN_USERS) in diesen Buyer-Eintrag.
+                    # Symptom war: Schuckinho's Gosens-Eintrag hatte einen
+                    # Sell an sich selbst für 7.6M (= Orbán's Preis) statt
+                    # sell=None. Siehe test_regression_sell_leak.py.
+                    sell = None
                     member_id = transfer["to"]["id"]
                     member_name = transfer["to"]["name"]
                     buy = {
@@ -719,4 +730,33 @@ def refresh_season_bonuses(db, token, season=None, log=print) -> dict:
         f"day_first={counts['day_first']} day_last={counts['day_last']} "
         f"skipped={counts['skipped']}"
     )
+
+    # 6) PortfolioCache invalidieren — sonst sieht das Dashboard noch den
+    # alten Bonus-Stand. Symptom war: Hansi Flick Cash-Dashboard zeigte
+    # 3,39M€ statt 3,87M€, weil 480K an per_point-Boni im Cache fehlten.
+    bust_portfolio_cache(db, season=season)
+    log(f"PortfolioCache: invalidiert (season={season})")
+
     return counts
+
+
+def bust_portfolio_cache(db, season: str | None = None) -> int:
+    """Löscht PortfolioCache-Einträge und zwingt das Dashboard damit zur
+    Neuberechnung. Wird aufgerufen, wenn SeasonBonus, Transfers oder eine
+    andere Datenquelle aktualisiert wurde, deren Cash-Implikationen der
+    Cache nicht sieht.
+
+    Args:
+        db: Mongo-DB-Handle.
+        season: Wenn gesetzt, nur Einträge dieser Saison löschen
+            (z.B. '2026/2027'). Sonst alles löschen.
+
+    Returns:
+        Anzahl gelöschter Cache-Einträge.
+    """
+    cache = db["PortfolioCache"]
+    if season:
+        result = cache.delete_many({"spielzeit": season})
+    else:
+        result = cache.delete_many({})
+    return result.deleted_count

@@ -52,6 +52,17 @@ def show(db, transfers, spielzeit):
 
     st.header("Mein aktuelles Team")
 
+    # Manueller Cache-Bust: Praktisch, wenn gerade Bonus- oder Transfer-Daten
+    # per Cron/Backfill aktualisiert wurden und das Dashboard nicht bis zum
+    # TTL (10 min) warten soll. Bustet sowohl Streamlit- als auch
+    # MongoDB-Cache (PortfolioCache).
+    if st.sidebar.button("🔄 Daten neu laden", help="PortfolioCache + Streamlit-Caches leeren"):
+        st.cache_data.clear()
+        from update_jobs import bust_portfolio_cache
+        bust_portfolio_cache(db)
+        st.success("Cache geleert.")
+        st.rerun()
+
     # Guard against empty or malformed transfers data
     if transfers.empty or 'Mitspieler' not in transfers.columns:
         st.warning("Keine Transferdaten für die ausgewählte Saison gefunden.")
