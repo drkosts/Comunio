@@ -20,8 +20,8 @@ import time
 # sind hashable, aber das wäre Overhead).
 
 _CACHE_TTL = 60  # 1 Minute — häufigeres Refresh, weil Mongo PortfolioCache
-                  schon persistent ist und nur als In-Memory-Beschleuniger dient.
-                  Niedriger TTL = weniger veraltete Cash-Anzeigen nach Cron-Updates.
+#                  schon persistent ist und nur als In-Memory-Beschleuniger dient.
+#                  Niedriger TTL = weniger veraltete Cash-Anzeigen nach Cron-Updates.
 
 
 @st.cache_data(ttl=_CACHE_TTL)
