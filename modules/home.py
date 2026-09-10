@@ -19,7 +19,9 @@ import time
 # das MongoClient-Argument NICHT in den Cache-Key aufzunehmen (Clients
 # sind hashable, aber das wäre Overhead).
 
-_CACHE_TTL = 600  # 10 Minuten — passt zum stündlichen Cron-Rhythmus
+_CACHE_TTL = 60  # 1 Minute — häufigeres Refresh, weil Mongo PortfolioCache
+                  schon persistent ist und nur als In-Memory-Beschleuniger dient.
+                  Niedriger TTL = weniger veraltete Cash-Anzeigen nach Cron-Updates.
 
 
 @st.cache_data(ttl=_CACHE_TTL)
