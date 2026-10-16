@@ -424,3 +424,36 @@ def test_incremental_recalc_includes_season_bonuses():
         db["SeasonBonus"].delete_many({"member_name": test_user, "season": test_season})
         db["PortfolioCache"].delete_many({"cache_key": f"{test_user}_{test_season}"})
         portfolio_mod_obj.get_date_range = original_get_range
+
+
+def test_attach_sell_same_tick_round_trip():
+    """Beweisstück E: Kauf und Rückverkauf im selben News-Item haben dieselbe
+    datetime. Symptom 2026-10-16: Constantin/Karaman + Raum blieben offen,
+    Dashboard zeigte +16M Kaderwert und -16M Cash zu viel.
+    """
+    load_dotenv()
+    uri = os.environ.get("MONGO_URI")
+    if not uri:
+        pytest.skip("MONGO_URI nicht gesetzt")
+    client = MongoClient(uri)
+    try:
+        db = client.get_default_database()
+    except Exception:
+        db = client["test"]
+    transfers = db["Transfers"]
+    test_pid = TEST_PLAYER_BASE + 998
+    test_mid = TEST_MEMBER_BASE + 998
+    try:
+        transfers.delete_many({"player_id": test_pid})
+        transfers.insert_one({
+            "player_id": test_pid, "player_name": "_t_tick",
+            "member_id": test_mid, "member_name": "_t_tick_member",
+            "buy": {"datetime": TEST_DATE, "date": TEST_DATE[:10], "price": 100, "from_name": "X", "from_id": 2},
+            "sell": None,
+        })
+        sell = {"datetime": TEST_DATE, "date": TEST_DATE[:10], "price": 90, "to_name": "X", "to_id": 2}
+        assert update_jobs._attach_sell(transfers, test_mid, test_pid, sell, log=lambda *a, **k: None) is True
+        assert transfers.find_one({"player_id": test_pid})["sell"]["price"] == 90
+    finally:
+        transfers.delete_many({"player_id": test_pid})
+        client.close()

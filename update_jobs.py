@@ -266,7 +266,8 @@ def _attach_sell(transfers, member_id, player_id, sell, log=print):
             "member_id": member_id,
             "player_id": player_id,
             "sell": None,
-            "buy.datetime": {"$lt": sell["datetime"]},
+            # $lte: Kauf+Rückverkauf am selben Tag teilen sich die News-datetime.
+            "buy.datetime": {"$lte": sell["datetime"]},
         },
         sort=[("buy.datetime", -1)],
     )
